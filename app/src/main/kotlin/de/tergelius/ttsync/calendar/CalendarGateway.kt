@@ -16,10 +16,12 @@ import de.tergelius.ttsync.mapping.Marker
  *   expected uuid. If a check fails, write nothing for that operation and return
  *   [OpResult.Rejected]; the engine sends the uuid back through adopt-or-insert.
  * - **R2.** Never update or delete with a selection over the table. Every write targets
- *   `ContentUris.withAppendedId(Events.CONTENT_URI, id)`, with the precondition
- *   `_id=? AND calendar_id=? AND deleted=0 AND description LIKE ?` ([Marker.likeEndsWith]) and
- *   `withExpectedCount(1)`. If a precondition fails while the batch applies, the whole batch rolls
- *   back and [apply] returns [BatchResult.Aborted].
+ *   `ContentUris.withAppendedId(Events.CONTENT_URI, id)` and is preceded in the same batch by the
+ *   precondition `_id=? AND calendar_id=? AND deleted=0 AND description LIKE ?`
+ *   ([GatewayRules.PRECONDITION], an assert query with `withExpectedCount(1)`; CalendarProvider2
+ *   ignores a selection on an `_ID` URI, so it cannot sit on the write itself). If a precondition
+ *   fails while the batch applies, the whole batch rolls back and [apply] returns
+ *   [BatchResult.Aborted].
  * - **R3.** Insert only into the target calendar, and only after [TargetCalendar.check] is OK; [apply]
  *   re-checks it per batch and throws [TargetUnavailableException] otherwise.
  * - **R4.** Never use `CALLER_IS_SYNCADAPTER`. Never write Attendees, Reminders,
