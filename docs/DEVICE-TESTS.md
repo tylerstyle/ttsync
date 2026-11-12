@@ -3,7 +3,7 @@
 Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
 [DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
 
-Five runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
+Six runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
 driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
@@ -11,7 +11,7 @@ timed events, "TT test weekly" (weekly series with one deleted and one moved occ
 Google calendar, which already held 7 events of its own.
 
 **Safety invariant held in every run:** the target's 7 own events were hashed before the run and
-compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 in run 5): never
+compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 each in runs 5 and 6): never
 changed. After each run the target held
 only those 7 events again.
 
@@ -122,6 +122,22 @@ is there as before. Target: the user's Google calendar with its 7 own events.
 events, only the labels' `updated_at`, so the new name reaches the copies with the next FULL run
 (every run for the test calendar, which is small).
 
+## Run 6: update 0.1.1 → 0.2.0 through Obtainium, release build
+
+The published 0.1.1 APK was installed with adb and tracked by Obtainium (as in run 4), set up with
+all events copied, then updated through Obtainium to the published 0.2.0.
+
+| Area | Result |
+|---|---|
+| Update offered ("0.1.1 → v0.2.0") and installed in place: "Update this app?", Play Protect "App scan recommended" → "Scan app" → "This app looks safe" → "Install" | Pass |
+| Installed APK byte-identical to the 0.2.0 asset, release certificate, versionCode 200, `firstInstallTime` unchanged, installer Obtainium | Pass |
+| Kept: sign-in, settings, permissions, the WorkManager job; Sources shows "Events: All"; the copies byte-identical right after the install | Pass |
+| First "Sync now" after the update: Added 0 · Updated 7 · Deleted 0, same `_id`s and `_sync_id`s | Pass: the 7 copies with an unnamed label got their `Label:` line (**B3**). The rewrite also put back the app's own form of two values that Google's sync had changed (an empty location as no location; the series' RRULE/EXDATE), with the same instants |
+| Label filter in the release build: "Remove copies?" count equals the copies deleted (8), only the matching copy stays | Pass |
+| L1–L5 on the phone | Pass: no "·" at a line end (it starts the next line); the black swatch's outline is clearly visible; the events line sits under its calendar; German "(vor 2 Minuten)"; Android's App info → Language offers English and German |
+| Database schema 3 | Not checked: a release build can't be read with `run-as` |
+| TalkBack | Not run: starting TalkBack opened a system permission prompt that couldn't be answered safely over adb |
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -132,11 +148,11 @@ events, only the labels' `updated_at`, so the new name reaches the copies with t
 | R1 | Low | The "Synced N s ago" snackbar never showed: Status cleared the note, which was its `LaunchedEffect` key, before `showSnackbar`, so Compose cancelled the effect. | Fix round 2: the note is a one-off `SyncedNote` with an id, consumed only after `showSnackbar` returns; a newer note is never cleared by an older one (`StatusViewModelTest`). Verified in run 3. |
 | O1 | Low | Right after a run, "Last successful sync" read "(In 0 minutes)": Status's clock ticks once a minute, so a run that finished after the last tick lay in its future. | 0.1.1: Status takes the newer of the clock and the last success as "now" (`StatusViewModelTest`). Verified in run 4. |
 | B3 | Low | TimeTree's default labels have empty names (the apps show them by the name of their colour), so copies get no `Label:` line. | 0.2.0: the copies' `Label:` line uses the label's name, else the English name of its colour (TimeTree's 25 colour names, by colour, not by label id). Copies with unnamed labels are rewritten once at their next FULL. The filter editor shows the same names, localized. Verified in run 5. |
-| L1 | Low | Status's last-run counts wrapped with a "·" left at the end of a line ("… · Skipped 1 ·" / "Filtered 8"). | 0.2.0 fix round (`b13b86e`): the counts, and the "Events: …" summary on Sources, wrap only between items, with the "·" starting the next line. Not yet verified on the device. |
-| L2 | Low | The swatch of a "Midnight black" label was nearly invisible in the dark theme. | 0.2.0 fix round: every swatch has a 1 dp outline. Not yet verified on the device. |
-| L3 | Low | Extra space under the "Events: …" line on Sources. | 0.2.0 fix round: the line sits right under its calendar's name, like a subtitle. Not yet verified on the device. |
-| L4 | Low | German relative times in parentheses started with a capital: "(Vor 1 Minute)". | 0.2.0 fix round: the first letter is lower case, locale-aware: "(vor 1 Minute)"; in English "(5 minutes ago)" is unchanged and "(In 40 minutes)" becomes "(in 40 minutes)". Not yet verified on the device. |
-| L5 | Low | Android 13+'s Settings → App languages didn't offer the app: no locale config. | 0.2.0 fix round: AGP generates one for English and German. Not yet verified on the device. |
+| L1 | Low | Status's last-run counts wrapped with a "·" left at the end of a line ("… · Skipped 1 ·" / "Filtered 8"). | 0.2.0 fix round (`b13b86e`): the counts, and the "Events: …" summary on Sources, wrap only between items, with the "·" starting the next line. Verified in run 6. |
+| L2 | Low | The swatch of a "Midnight black" label was nearly invisible in the dark theme. | 0.2.0 fix round: every swatch has a 1 dp outline. Verified in run 6. |
+| L3 | Low | Extra space under the "Events: …" line on Sources. | 0.2.0 fix round: the line sits right under its calendar's name, like a subtitle. Verified in run 6. |
+| L4 | Low | German relative times in parentheses started with a capital: "(Vor 1 Minute)". | 0.2.0 fix round: the first letter is lower case, locale-aware: "(vor 1 Minute)"; in English "(5 minutes ago)" is unchanged and "(In 40 minutes)" becomes "(in 40 minutes)". Verified in run 6. |
+| L5 | Low | Android 13+'s Settings → App languages didn't offer the app: no locale config. | 0.2.0 fix round: AGP generates one for English and German. Verified in run 6. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in
 local-time form, `WKST=MO`, default reminders); the app hashes what it writes, not what it reads
@@ -145,10 +161,7 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
 
 ## Not tested yet
 
-- **The 0.2.0 release build as an update over 0.1.1 through Obtainium** ([DESIGN.md](DESIGN.md)
-  section 10, step 15, with the release APK): runs after the release.
-- **The layout fixes L1–L5** of the 0.2.0 fix round.
-- **TalkBack** on the new screens: the "Choose events" action of the events line, the label rows
+- **TalkBack** on the new screens (needs a person at the phone; see run 6): the "Choose events" action of the events line, the label rows
   (colour name only when the row doesn't show it already) and the checkbox rows.
 - **Feeds of more than 3 pages** (about 300 events) on a real calendar: the high-water INCREMENTAL
   path and the 6-hour FULL ran only in unit tests. The test calendar always fit on one page.
