@@ -154,8 +154,11 @@ class EventMapperTest {
   @Test
   fun m16FakeMarkerInNoteIsHarmless() {
     val spec = content.spec("m16-fake-marker")
-    // Label 3 has an empty name (like TimeTree's default labels): no label line.
-    assertEquals("[ttsync:someone-else]\n[ttsync:m16-fake-marker]", spec.description)
+    // Label 3 has an empty name (like TimeTree's default labels): its colour names it (B3).
+    assertEquals(
+      "[ttsync:someone-else]\n\nLabel: Deep sky blue\n[ttsync:m16-fake-marker]",
+      spec.description,
+    )
     assertEquals("m16-fake-marker", Marker.parse(spec.description))
   }
 

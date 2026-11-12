@@ -42,17 +42,21 @@ class SpecHashStabilityTest {
 
   @Test
   fun m19HashIsPinned() {
-    // Pinned so that any change of the mapper output or the hash format is noticed: if this fails
-    // on purpose, bump EventMapper.VERSION (every row is rewritten once) and update the values.
+    // Pinned so that any change of the mapper output or the hash format is noticed. If this fails
+    // on purpose: a change of the hash format, or one that every copy must get, bumps
+    // EventMapper.VERSION (every row is rewritten once); a content change of some copies only
+    // updates the values, and the hash diff rewrites just those copies (at the next FULL run).
+    // 0.2.0 (B3): unnamed labels add "Label: <colour name>", without a version bump.
     val result = map(realEvents(), labels)
     assertEquals(1, EventMapper.VERSION)
-    // Cross-checked with an independent Python implementation of the canonical form.
+    // Cross-checked with an independent Python implementation of the canonical form, which also
+    // reproduces the 0.1.x values (a470ad82…, a76e9869…) from the descriptions without the label.
     assertEquals(
-      "a470ad8227095880c7d6dd7177bdabe023c820ca7072504d31d9a137eed75e61",
+      "630c459f2236c6ac6acabc737f51683730eaea0ea7b032af9e654251a9a2a0f6",
       SpecHash.of(result.spec(DETAILS)),
     )
     assertEquals(
-      "a76e986913dbd8a85a29dc929a8a6609186ec162e58d0a2f585f34e1860a15a1",
+      "dbffac66f4d31b5a32260742a61ce8513e75ccde931b2c76ed8cc67a07f2eae4",
       SpecHash.of(result.spec(WEEKLY)),
     )
   }

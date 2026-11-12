@@ -110,8 +110,9 @@ data class MappingStats(
  * The mapping of DESIGN.md section 4. Column rules:
  * - `TITLE`: the title, or `(TimeTree)` if it is blank. `EVENT_LOCATION`: the location, or null if
  *   blank.
- * - `DESCRIPTION`: the note, a blank line, then `Label: <name>` and `URL: <url>`, each only if set;
- *   the marker is always the last line.
+ * - `DESCRIPTION`: the note, a blank line, then `Label: <name>` ([LabelNames.forCopy]: the name,
+ *   or the English name of an unnamed label's colour) and `URL: <url>`, each only if set; the
+ *   marker is always the last line.
  * - Timed: `DTSTART = start_at`, `DTEND = max(end_at, start_at)`, `EVENT_TIMEZONE` the valid
  *   `start_timezone` or `UTC`, `EVENT_END_TIMEZONE` the valid `end_timezone` if it differs, else null.
  * - All-day: start and inclusive end date by [TimeRules.allDayDate], `DTSTART`/`DTEND` at UTC
@@ -256,7 +257,7 @@ class DefaultEventMapper : EventMapper {
     val note = event.note?.takeIf { it.isNotBlank() }?.trimEnd()
     val footer =
       listOfNotNull(
-        event.labelId?.let { labels[it]?.name }?.let(::oneLine)?.let { "Label: $it" },
+        event.labelId?.let { labels[it] }?.let(LabelNames::forCopy)?.let(::oneLine)?.let { "Label: $it" },
         event.url?.let(::oneLine)?.let { "URL: $it" },
       )
     val body = listOfNotNull(note, footer.joinToString("\n").ifEmpty { null }).joinToString("\n\n")

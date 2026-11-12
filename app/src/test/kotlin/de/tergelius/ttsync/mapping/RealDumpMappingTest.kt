@@ -31,9 +31,13 @@ class RealDumpMappingTest {
     val spec = result.spec(DETAILS)
     assertEquals("TT test details", spec.title)
     assertEquals("Berlin Hauptbahnhof", spec.location)
-    // Label 6 exists but has an empty name (TimeTree's default labels are colours only).
+    // Label 6 has an empty name (TimeTree's default labels are colours only), so the copy names
+    // its colour, as TimeTree does (B3): 0xE73B3B is "Apple red".
     assertEquals("", labels.getValue(6).name)
-    assertEquals("Test note\n\nURL: https://example.org\n[ttsync:$DETAILS]", spec.description)
+    assertEquals(
+      "Test note\n\nLabel: Apple red\nURL: https://example.org\n[ttsync:$DETAILS]",
+      spec.description,
+    )
     assertEquals(berlin(2026, 11, 17, 15), spec.dtStart)
     assertEquals(berlin(2026, 11, 17, 15) + HOUR, spec.dtEnd)
     assertEquals("Europe/Berlin", spec.eventTimezone)
@@ -51,7 +55,8 @@ class RealDumpMappingTest {
     assertEquals("UTC", spec.eventTimezone)
     assertNull(spec.eventEndTimezone)
     assertNull(spec.location) // "" in the dump
-    assertEquals("[ttsync:$ALL_DAY]", spec.description) // note and url are null
+    // Note and url are null; label 1 is unnamed, colour 0x2ECC87.
+    assertEquals("Label: Emerald green\n[ttsync:$ALL_DAY]", spec.description)
     assertEquals(utcDay(2026, 11, 20), write.endAt)
   }
 }
