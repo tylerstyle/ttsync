@@ -43,6 +43,7 @@ import de.tergelius.ttsync.ui.common.LoadingBox
 import de.tergelius.ttsync.ui.common.RowDivider
 import de.tergelius.ttsync.ui.common.SectionCard
 import de.tergelius.ttsync.ui.common.TtScaffold
+import de.tergelius.ttsync.ui.common.wrapBetweenItems
 import de.tergelius.ttsync.ui.settings.SignOutAction
 import de.tergelius.ttsync.ui.theme.TTCalendarSyncTheme
 
@@ -207,14 +208,18 @@ private fun SourceRow(
   }
 }
 
-/** "Events: All ›": opens the calendar's filter editor. */
+/**
+ * "Events: All ›", right under the calendar's name like a subtitle (device run 5, L3): it opens the
+ * calendar's filter editor. The whole width is the touch target, and Compose routes touches close
+ * to a target this small to it.
+ */
 @Composable
 private fun FilterLine(filter: EventFilter?, onClick: () -> Unit, enabled: Boolean) {
   val resources = LocalResources.current
   Row(
     modifier =
       Modifier.fillMaxWidth()
-        .heightIn(min = 48.dp)
+        .heightIn(min = 32.dp)
         .clickable(
           enabled = enabled,
           onClickLabel = stringResource(R.string.sources_filter_open),
@@ -222,11 +227,13 @@ private fun FilterLine(filter: EventFilter?, onClick: () -> Unit, enabled: Boole
           onClick = onClick,
         )
         // Lines up with the calendar name: checkbox (24 dp) plus the name's padding (12 dp).
-        .padding(start = 36.dp),
-    verticalAlignment = Alignment.CenterVertically,
+        .padding(start = 36.dp, bottom = 8.dp),
+    verticalAlignment = Alignment.Top,
   ) {
     Text(
-      stringResource(R.string.sources_filter_line, filterSummaryText(filter, resources)),
+      wrapBetweenItems(
+        stringResource(R.string.sources_filter_line, filterSummaryText(filter, resources))
+      ),
       modifier = Modifier.weight(1f),
       style = MaterialTheme.typography.bodyMedium,
       color =
@@ -254,7 +261,11 @@ private fun SourceCheckRow(option: SourceOption, onToggle: () -> Unit, enabled: 
           role = Role.Checkbox,
           onValueChange = { onToggle() },
         )
-        .padding(vertical = 4.dp),
+        // With an "Events: …" line below, the name moves down towards it (L3).
+        .then(
+          if (option.canFilter) Modifier.padding(top = 8.dp)
+          else Modifier.padding(vertical = 4.dp)
+        ),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Checkbox(checked = option.selected, onCheckedChange = null, enabled = enabled)

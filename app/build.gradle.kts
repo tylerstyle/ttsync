@@ -83,6 +83,11 @@ android {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
   }
+  androidResources {
+    // A locale config, so Android 13+ offers the app under Settings → App languages (device run 5,
+    // L5). AGP builds it from the res/values-* folders; values/ is English (res/resources.properties).
+    generateLocaleConfig = true
+  }
   buildFeatures {
     compose = true
     aidl = false

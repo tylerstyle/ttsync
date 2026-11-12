@@ -67,6 +67,7 @@ import de.tergelius.ttsync.ui.common.formatTime
 import de.tergelius.ttsync.ui.common.rememberCalendarPermissionRequest
 import de.tergelius.ttsync.ui.common.rememberNotificationRequest
 import de.tergelius.ttsync.ui.common.rememberSettingsLauncher
+import de.tergelius.ttsync.ui.common.wrapBetweenItems
 import de.tergelius.ttsync.ui.sources.sourceNames
 import de.tergelius.ttsync.ui.theme.TTCalendarSyncTheme
 
@@ -394,7 +395,7 @@ private fun LastRun(report: SyncReport) {
     style = MaterialTheme.typography.titleSmall,
   )
   val c: SyncCounts = report.counts
-  Text(
+  val counts =
     if (c.filtered > 0) {
       stringResource(
         R.string.status_counts_filtered,
@@ -406,9 +407,9 @@ private fun LastRun(report: SyncReport) {
       )
     } else {
       stringResource(R.string.status_counts, c.added, c.updated, c.deleted, c.skipped)
-    },
-    style = MaterialTheme.typography.bodyMedium,
-  )
+    }
+  // Wraps only between the counts, never leaving a "·" at the end of a line (device run 5, L1).
+  Text(wrapBetweenItems(counts), style = MaterialTheme.typography.bodyMedium)
   if (c.unmatchedOverrides > 0) {
     Hint(
       pluralStringResource(R.plurals.status_unmatched, c.unmatchedOverrides, c.unmatchedOverrides)

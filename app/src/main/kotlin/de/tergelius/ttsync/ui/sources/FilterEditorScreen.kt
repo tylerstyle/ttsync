@@ -176,7 +176,9 @@ private fun ChoiceRow(
 
 /**
  * The label's colour as a dot. Its content description is the colour's name ("Custom colour" for
- * one TimeTree doesn't name), except when the row already shows that name (an unnamed label).
+ * one TimeTree doesn't name), except when the row already shows that name (an unnamed label). The
+ * outline keeps dark colours such as "Midnight black" visible on a dark background, and light ones
+ * on a light background (device run 5, L2).
  */
 @Composable
 private fun LabelSwatch(label: TtLabel, shownName: String) {
@@ -196,7 +198,7 @@ private fun LabelSwatch(label: TtLabel, shownName: String) {
           rgb?.let { Color(0xFF000000 or (it and 0xFFFFFF)) } ?: Color.Transparent,
           CircleShape,
         )
-        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
         .then(
           if (description != null) Modifier.semantics { contentDescription = description }
           else Modifier
