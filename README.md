@@ -69,8 +69,8 @@ it updated.
    apps. Allow it and install. You can turn the permission off again afterwards.
 3. Confirm "Install this app?" with **Install**.
 4. Google Play Protect may show **App scan recommended** and offer to send the app to Google for a
-   security scan. That's fine: the APK is public. It may start the scan by itself after a few
-   seconds and then lets the installation continue. If your phone warns about an app from an
+   security scan. That's fine: the APK is public. Tap **Scan app**, and when the scan is done, tap
+   **Install**. Play Protect asks again for every update. If your phone warns about an app from an
    unknown developer instead, open the details and choose to install anyway.
 
 **With Obtainium (automatic updates)**
@@ -84,7 +84,13 @@ it updated.
 3. Open it and tap **Install**. The first time, Android opens "Install unknown apps" for Obtainium:
    turn on *Allow from this source* and go back. Then confirm with **Install**. Play Protect may
    recommend a scan, as described above.
-4. From now on, Obtainium checks for new releases and offers them as updates.
+4. From now on, Obtainium checks for new releases and offers them as updates: the app's row shows
+   the new version (for example "0.1.0 → v0.1.1") and an **Update** button. Android asks "Update
+   this app?", and Play Protect may recommend a scan again. Updates keep your sign-in, settings and
+   copies.
+
+Installed from the releases page already? Add the URL in Obtainium anyway. It picks up the
+installed version and offers updates from then on, without reinstalling.
 
 **Google's developer verification.** Google is introducing a rule that apps installed outside
 Google Play on certified Android phones must come from a registered developer. It applies in
@@ -332,7 +338,8 @@ nicht. Nutzung auf eigenes Risiko. Kopiere nur Kalender, deren Besitzer zugestim
   [Obtainium](https://github.com/ImranR98/Obtainium) die URL `https://github.com/tylerstyle/ttsync`
   hinzufügen und installieren (Obtainium braucht dafür einmal „Unbekannte Apps installieren“), dann
   kommen Updates automatisch. Google Play Protect empfiehlt eventuell, die App zum Scannen an Google
-  zu schicken: Das ist in Ordnung, die APK ist öffentlich. Googles Entwicklerverifizierung gilt in
+  zu schicken (auch bei jedem Update): Das ist in Ordnung, die APK ist öffentlich. „Scan app“
+  tippen, nach dem Scan „Install“. Googles Entwicklerverifizierung gilt in
   Deutschland noch nicht (geplant ab 2027); die App ist nicht registriert. Unter Einstellungen →
   „Über die App und Datenschutz“ (in Obtainium als „Certificate Hash“) muss der Fingerabdruck des
   Signaturzertifikats lauten:

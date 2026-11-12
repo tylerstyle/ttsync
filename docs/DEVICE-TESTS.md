@@ -3,7 +3,7 @@
 Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
 [DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
 
-Three runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
+Four runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
 driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
@@ -11,7 +11,7 @@ timed events, "TT test weekly" (weekly series with one deleted and one moved occ
 Google calendar, which already held 7 events of its own.
 
 **Safety invariant held in every run:** the target's 7 own events were hashed before the run and
-compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3): never changed. After each run the target held
+compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4): never changed. After each run the target held
 only those 7 events again.
 
 ## Run 1: debug build `d2756c2`
@@ -63,7 +63,7 @@ then **Add** → `https://github.com/tylerstyle/ttsync` → **Install**.
 | Area | Result |
 |---|---|
 | Obtainium finds v0.1.0 and picks `ttsync-0.1.0.apk` (ignores the `.sha256` and mapping assets); no warnings or extra questions | Pass |
-| Install dialogs: "Install unknown apps" for Obtainium, "Install this app?", Play Protect "App scan recommended" | Pass: Play Protect started the cloud scan by itself after about 15 s, verdict SAFE, install continued. README updated |
+| Install dialogs: "Install unknown apps" for Obtainium, "Install this app?", Play Protect "App scan recommended" | Pass: after "Scan app" Play Protect uploaded the APK, verdict SAFE, then "Install". README updated |
 | Installed APK byte-identical to the release asset, release certificate, versionCode 100, installer Obtainium | Pass |
 | About and Obtainium's "Certificate Hash" show the release fingerprint | Pass |
 | Notifications denied | Pass: Status keeps "Syncing normally" and adds a "Notifications are off" warning with **Turn on**; the checklist lists it as a problem |
@@ -74,6 +74,25 @@ then **Add** → `https://github.com/tylerstyle/ttsync` → **Install**.
 | "Remove all copies", Google purges them, uninstall | Pass: no marked rows left |
 | "Last successful sync" right after a run | **Fail (O1)**: "(In 0 minutes)" |
 
+## Run 4: update 0.1.0 → 0.1.1 through Obtainium
+
+Obtainium 1.7.4 can't install an older release, so the verified 0.1.0 release APK was installed with
+adb, the way a user who downloaded it from the releases page has it, and then added in Obtainium.
+
+| Area | Result |
+|---|---|
+| Obtainium adopts an app installed outside it | Pass: right after adding the URL, "0.1.0 Installed / v0.1.1 Latest", no questions |
+| Set up 0.1.0: sign-in, Family → personal, notifications allowed, first sync, all copies uploaded | Pass |
+| Update offered | Pass: the row shows "0.1.0 → v0.1.1" with **Update** |
+| Update dialogs: "Update this app?", Play Protect "App scan recommended" again, "Scan app" → SAFE → "Install" | Pass: no uninstall. README now says every update may show the scan prompt |
+| Installed in place: APK byte-identical to the 0.1.1 asset, same certificate, versionCode 101, `firstInstallTime` unchanged, same app id, installer now Obtainium | Pass |
+| Kept: permissions, battery exemption, the same WorkManager job, run history, sign-in (no login screen), settings | Pass |
+| Copies unchanged by the update and by the next "Sync now" (same `_id`s and `_sync_id`s, Added 0 · Updated 0 · Deleted 0, no duplicates) | Pass |
+| "Last successful sync" right after a run | Pass (**O1 fixed**): "(0 minutes ago)" |
+| "Sync now" within 60 s, About, release logs | Pass: "Synced 14 s ago, nothing to do"; Version 0.1.1, same certificate; no `TtSync` lines |
+| Obtainium after the update | Pass: "v0.1.1 Installed / Latest", no update offered |
+| "Remove all copies", Google purges them, uninstall | Pass: no marked rows left |
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -82,7 +101,7 @@ then **Add** → `https://github.com/tylerstyle/ttsync` → **Install**.
 | B2 | Medium | Since Android 13, `getSyncAutomatically` answers "off" and `requestSync` does nothing for an account the app cannot see, which is the normal case for the Google account: a false "Google sync is off" on every run. | Fix round 1: the account switch counts only if the account is visible to the app, otherwise it is unknown and gives no warning. Instead the app warns when its copies are still `dirty` 30 min after it wrote them. `requestSync` is best effort. Verified in run 2. |
 | F4 | Info | A second "Sync now" within 60 s was queued as delayed, non-expedited work. With the app in the background it waited until the app came back to the foreground. | Fix round 1: "now" work is always expedited and never delayed; a "Sync now" within 60 s of a successful run queues nothing and Status says "Synced N s ago". Verified in run 2 through the debug receiver; the UI note is R1. |
 | R1 | Low | The "Synced N s ago" snackbar never showed: Status cleared the note, which was its `LaunchedEffect` key, before `showSnackbar`, so Compose cancelled the effect. | Fix round 2: the note is a one-off `SyncedNote` with an id, consumed only after `showSnackbar` returns; a newer note is never cleared by an older one (`StatusViewModelTest`). Verified in run 3. |
-| O1 | Low | Right after a run, "Last successful sync" read "(In 0 minutes)": Status's clock ticks once a minute, so a run that finished after the last tick lay in its future. | 0.1.1: Status takes the newer of the clock and the last success as "now" (`StatusViewModelTest`). Not yet on the device. |
+| O1 | Low | Right after a run, "Last successful sync" read "(In 0 minutes)": Status's clock ticks once a minute, so a run that finished after the last tick lay in its future. | 0.1.1: Status takes the newer of the clock and the last success as "now" (`StatusViewModelTest`). Verified in run 4. |
 | B3 | Low, open | TimeTree's default labels have empty names (the apps localize them), so copies get no `Label:` line. | None yet: map the default label ids to names, or document that only renamed labels appear. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in
@@ -98,5 +117,6 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
   and in the checklist, but no failure was due, so no notification was missed.
 - **Other vendors and Android versions**: only LineageOS 24 on one phone; no vendor battery
   managers (Samsung, Xiaomi, OxygenOS, ...), no Android 8-16.
-- The O1 fix on the device, a periodic run of the fixed build, an update through Obtainium (needs
-  a second release), and the Keystore key removal at sign-out (needs root).
+- Obtainium's background update checks and update notifications (its notification permission was
+  denied in runs 3 and 4; updates were found by pull-to-refresh).
+- A periodic run of the fixed build, and the Keystore key removal at sign-out (needs root).
