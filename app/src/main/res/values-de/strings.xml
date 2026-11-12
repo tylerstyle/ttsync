@@ -4,4 +4,269 @@
     <string name="channel_sync_problems_description">Erscheint, wenn das Kopieren aus TimeTree nicht mehr funktioniert und du eingreifen musst.</string>
     <string name="channel_sync_running_name">Synchronisierung läuft</string>
     <string name="channel_sync_running_description">Erscheint kurz, während eine Synchronisierung im Vordergrund läuft.</string>
+
+    <!-- Common actions -->
+    <string name="action_back">Zurück</string>
+    <string name="action_cancel">Abbrechen</string>
+    <string name="action_ok">OK</string>
+    <string name="action_next">Weiter</string>
+    <string name="action_save">Speichern</string>
+    <string name="action_continue">Weiter</string>
+    <string name="action_retry">Erneut versuchen</string>
+    <string name="action_refresh">Aktualisieren</string>
+    <string name="action_open">Öffnen</string>
+    <string name="action_change">Ändern</string>
+    <string name="action_start">Starten</string>
+    <string name="action_remove">Entfernen</string>
+    <string name="action_allow">Erlauben</string>
+    <string name="action_turn_on">Einschalten</string>
+    <string name="action_turn_off">Ausschalten</string>
+    <string name="action_remove_copies">Kopien entfernen</string>
+    <string name="action_sign_out">Abmelden</string>
+    <string name="action_sign_in_again">Erneut anmelden</string>
+    <string name="action_open_sync_settings">Synchronisierungseinstellungen öffnen</string>
+    <string name="action_open_app_settings">App-Einstellungen öffnen</string>
+    <string name="action_open_autostart">Autostart-Einstellungen öffnen</string>
+    <string name="action_open_dontkillmyapp">dontkillmyapp.com öffnen</string>
+    <string name="working">Wird ausgeführt…</string>
+    <string name="time_with_relative">%1$s (%2$s)</string>
+
+    <!-- Common errors -->
+    <string name="error_offline">Keine Verbindung zu TimeTree. Prüfe deine Internetverbindung und versuche es erneut.</string>
+    <string name="error_rate_limited">TimeTree bittet die App, langsamer zu machen. Versuche es in etwa einer halben Stunde erneut.</string>
+    <string name="error_api_changed">TimeTree hat auf eine Weise geantwortet, die diese App nicht versteht. Prüfe, ob es ein App-Update gibt.</string>
+    <string name="error_unknown">Etwas ist schiefgelaufen. Bitte versuche es erneut.</string>
+
+    <!-- Login -->
+    <string name="login_title">Bei TimeTree anmelden</string>
+    <string name="login_title_again">Erneut anmelden</string>
+    <string name="login_intro">TT Calendar Sync kopiert die Termine der TimeTree-Kalender, die du auswählst, in einen deiner Google-Kalender auf diesem Telefon. Die App liest nur aus TimeTree und ändert dort nie etwas.</string>
+    <string name="login_intro_again">TimeTree akzeptiert die gespeicherte Anmeldung nicht mehr. Melde dich erneut an, damit die Synchronisierung weiterläuft.</string>
+    <string name="login_privacy">E-Mail und Passwort werden verschlüsselt auf diesem Telefon gespeichert, damit sich die App erneut anmelden kann, wenn TimeTree die Sitzung beendet (etwa alle zwei Wochen). Sie werden nur an TimeTree gesendet.</string>
+    <string name="login_social_title">Mit Google oder Apple registriert?</string>
+    <string name="login_social_text">Die Anmeldung mit Google oder Apple funktioniert hier nicht. Lege in der TimeTree-App eine E-Mail-Adresse und ein Passwort für dein Konto fest und melde dich hier damit an. Oder lass dich vom Besitzer des Kalenders mit einem separaten Konto einladen, das E-Mail und Passwort nutzt.</string>
+    <string name="login_email">E-Mail</string>
+    <string name="login_password">Passwort</string>
+    <string name="login_show_password">Passwort anzeigen</string>
+    <string name="login_hide_password">Passwort verbergen</string>
+    <string name="login_submit">Anmelden</string>
+    <string name="login_error_rejected">TimeTree hat die Anmeldung abgelehnt. Prüfe E-Mail und Passwort. Nach mehreren Fehlversuchen kann TimeTree Anmeldungen eine Zeit lang sperren.</string>
+    <plurals name="login_error_rate_limited">
+        <item quantity="one">Zu viele Versuche. TimeTree bittet, %d Minute zu warten, bevor du es erneut versuchst.</item>
+        <item quantity="other">Zu viele Versuche. TimeTree bittet, %d Minuten zu warten, bevor du es erneut versuchst.</item>
+    </plurals>
+    <string name="login_error_offline">Keine Verbindung zu TimeTree. Prüfe deine Internetverbindung.</string>
+
+    <!-- Sources -->
+    <string name="sources_title">TimeTree-Kalender</string>
+    <string name="sources_intro">Wähle die TimeTree-Kalender aus, die kopiert werden sollen. Ihre Termine werden in einen Google-Kalender kopiert und aktuell gehalten.</string>
+    <string name="sources_owner_note">Wähle nur Kalender aus, deren Besitzer damit einverstanden sind, dass ihre Termine kopiert werden.</string>
+    <string name="sources_empty">Dieses TimeTree-Konto hat keine Kalender.</string>
+    <string name="sources_unnamed">Kalender %1$d</string>
+    <string name="sources_unavailable">Kein Zugriff mehr. Die Kopien bleiben erhalten, bis du die Auswahl aufhebst.</string>
+    <string name="sources_error_sign_in">TimeTree akzeptiert die gespeicherte Anmeldung nicht mehr.</string>
+    <string name="sources_remove_title">Kopien entfernen?</string>
+    <string name="sources_remove_text">Die Kopien dieser Kalender werden aus deinem Google-Kalender gelöscht: %1$s. Deine eigenen Termine bleiben unverändert.</string>
+
+    <!-- Target -->
+    <string name="target_title">Zielkalender</string>
+    <string name="target_intro">Wähle den Google-Kalender, in den die Kopien kommen. Google Kalender synchronisiert sie dann mit deinem Google-Konto.</string>
+    <string name="target_permission_title">Kalenderzugriff</string>
+    <string name="target_permission_text">Um die Kopien zu schreiben, braucht die App Zugriff auf die Kalender auf diesem Telefon. Sie ändert oder löscht nur Termine, die sie selbst angelegt hat.</string>
+    <string name="target_permission_button">Kalenderzugriff erlauben</string>
+    <string name="target_recommend">Empfohlen: ein eigener Kalender nur für TimeTree. Lege ihn auf calendar.google.com an (zum Beispiel „TimeTree“), warte, bis er hier erscheint, und tippe dann auf Aktualisieren.</string>
+    <string name="target_empty_title">Kein passender Kalender</string>
+    <string name="target_empty_text">Angezeigt werden nur Google-Kalender, die du bearbeiten kannst und die mit diesem Telefon synchronisiert werden. Füge in den Telefoneinstellungen ein Google-Konto hinzu und schalte dessen Kalendersynchronisierung ein.</string>
+    <plurals name="target_other_events">
+        <item quantity="one">%d anderer Termin bleibt unverändert</item>
+        <item quantity="other">%d andere Termine bleiben unverändert</item>
+    </plurals>
+    <string name="target_untouched_note">Termine, die nicht von der App angelegt wurden, werden nie geändert oder gelöscht.</string>
+    <string name="target_use">Diesen Kalender verwenden</string>
+    <string name="target_load_failed">Die Kalender konnten nicht gelesen werden.</string>
+    <string name="target_save_failed">Der Zielkalender konnte nicht geändert werden. Bitte versuche es erneut.</string>
+    <string name="target_switch_title">Zielkalender wechseln?</string>
+    <string name="target_switch_text">Die Kopien in %1$s werden entfernt. Danach werden alle Termine in %2$s kopiert.</string>
+    <string name="target_switch_confirm">Wechseln</string>
+    <string name="target_old_calendar">dem alten Kalender</string>
+    <string name="target_switched_title">Zielkalender geändert</string>
+    <plurals name="target_switched_removed">
+        <item quantity="one">%1$d Kopie aus dem alten Kalender entfernt. Es wird jetzt in %2$s kopiert.</item>
+        <item quantity="other">%1$d Kopien aus dem alten Kalender entfernt. Es wird jetzt in %2$s kopiert.</item>
+    </plurals>
+    <string name="target_switched_left">Der alte Kalender kann nicht mehr sicher geändert werden, deshalb bleiben die Kopien dort. Es wird jetzt in %1$s kopiert.</string>
+    <string name="target_switched_plain">Es wird jetzt in %1$s kopiert.</string>
+
+    <!-- Keep running -->
+    <string name="keep_running_title">Weiterlaufen lassen</string>
+    <string name="keep_running_intro">Android beendet Apps im Hintergrund, um Akku zu sparen. Damit neue Termine etwa stündlich kopiert werden, muss TT Calendar Sync weiterlaufen dürfen.</string>
+    <string name="keep_running_skip">Vorerst überspringen</string>
+    <string name="keep_running_skip_note">Wenn du das überspringst, kann die Synchronisierung unbemerkt stoppen. Der Status zeigt dann eine Warnung.</string>
+    <string name="keep_running_later">Du kannst das später in der Zuverlässigkeits-Checkliste ändern.</string>
+
+    <!-- Reliability checklist -->
+    <string name="reliability_title">Zuverlässigkeits-Checkliste</string>
+    <string name="reliability_intro">Alles, was darüber entscheidet, ob Synchronisierungen im Hintergrund weiterlaufen. Jede Korrektur öffnet die passende Systemseite.</string>
+    <string name="reliability_all_ok">Alle Prüfungen bestanden</string>
+    <plurals name="reliability_problems">
+        <item quantity="one">%d Problem</item>
+        <item quantity="other">%d Probleme</item>
+    </plurals>
+    <string name="reliability_footer">Manche Telefone beenden Hintergrund-Apps auf eine Weise, die keine App erkennen kann. Wenn die Synchronisierung trotzdem stoppt, folge den Tipps für dein Telefon.</string>
+    <string name="check_state_ok">OK</string>
+    <string name="check_state_problem">Problem</string>
+    <string name="check_state_unknown">Nicht prüfbar</string>
+    <string name="check_state_info">Information</string>
+    <string name="check_calendar_title">Kalenderzugriff</string>
+    <string name="check_calendar_ok">Erlaubt.</string>
+    <string name="check_calendar_problem">Nicht erlaubt. Die App kann die Kopien nicht schreiben.</string>
+    <string name="check_notifications_title">Benachrichtigungen</string>
+    <string name="check_notifications_ok">An. Du erfährst, wenn die Synchronisierung nicht mehr funktioniert.</string>
+    <string name="check_notifications_problem">Aus. Die App kann dir nicht mitteilen, wenn die Synchronisierung nicht mehr funktioniert.</string>
+    <string name="check_google_sync_title">Google-Kalender-Synchronisierung</string>
+    <string name="check_google_sync_ok">An. Die Kopien werden in dein Google-Konto hochgeladen.</string>
+    <string name="check_google_sync_master_off">Die automatische Synchronisierung ist für alle Konten aus. Die Kopien bleiben auf diesem Telefon, bis sie wieder an ist.</string>
+    <string name="check_google_sync_account_off">Die Kalendersynchronisierung ist für dieses Google-Konto aus. Die Kopien bleiben auf diesem Telefon, bis sie wieder an ist.</string>
+    <string name="check_google_sync_unknown">Wird geprüft, sobald ein Zielkalender gewählt und der Kalenderzugriff erlaubt ist.</string>
+    <string name="check_battery_title">Uneingeschränkte Akkunutzung</string>
+    <string name="check_battery_ok">Erlaubt. Android lässt die App im Hintergrund synchronisieren.</string>
+    <string name="check_battery_problem">Eingeschränkt. Android kann Synchronisierungen im Hintergrund verzögern oder auslassen. Erlaube der App eine uneingeschränkte Akkunutzung.</string>
+    <string name="check_autostart_title">Autostart</string>
+    <string name="check_autostart_detail">Auf Xiaomi-, Redmi- und POCO-Telefonen laufen Synchronisierungen im Hintergrund nie ohne Autostart. Schalte ihn für TT Calendar Sync ein. Die App kann das nicht selbst prüfen.</string>
+    <string name="check_background_title">Hintergrundaktivität</string>
+    <string name="check_background_ok">Nicht eingeschränkt.</string>
+    <string name="check_background_problem">Android schränkt diese App im Hintergrund ein, deshalb laufen keine Synchronisierungen. Hebe die Einschränkung in den Akkueinstellungen der App auf.</string>
+    <string name="check_unused_title">App-Aktivität bei Nichtnutzung pausieren</string>
+    <string name="check_unused_ok">Aus. Die App synchronisiert weiter, auch wenn du sie monatelang nicht öffnest.</string>
+    <string name="check_unused_problem">An. Wenn du die App einige Monate nicht öffnest, stoppt Android sie und entzieht ihr die Berechtigungen. Schalte das aus.</string>
+    <string name="check_dontkill_title">Tipps für dein Telefon</string>
+    <string name="check_dontkill_detail">dontkillmyapp.com erklärt, wie Telefone von %1$s Hintergrund-Apps beenden und wie du das verhinderst.</string>
+    <string name="check_dontkill_detail_generic">dontkillmyapp.com erklärt, wie Telefonhersteller Hintergrund-Apps beenden und wie du das verhinderst.</string>
+    <string name="check_bucket_title">App-Standby-Gruppe</string>
+    <string name="check_bucket_detail">Nur zur Diagnose: %1$s. In „Selten“ oder „Eingeschränkt“ führt Android die Hintergrundarbeit der App nur selten aus.</string>
+    <string name="bucket_exempted">Ausgenommen</string>
+    <string name="bucket_active">Aktiv</string>
+    <string name="bucket_working_set">Arbeitssatz</string>
+    <string name="bucket_frequent">Häufig</string>
+    <string name="bucket_rare">Selten</string>
+    <string name="bucket_restricted">Eingeschränkt</string>
+    <string name="bucket_other">Unbekannt</string>
+
+    <!-- Status -->
+    <string name="status_health_ok">Synchronisierung läuft normal</string>
+    <string name="status_health_waiting">Warte auf die erste Synchronisierung</string>
+    <string name="status_health_running">Synchronisiere gerade…</string>
+    <string name="status_health_attention">Braucht deine Aufmerksamkeit</string>
+    <string name="status_health_paused">Pausiert</string>
+    <string name="status_health_target_deleted">Zielkalender wurde gelöscht</string>
+    <string name="status_paused_text">Die App hat den Zugriff auf alle ausgewählten TimeTree-Kalender verloren. Ihre Kopien bleiben erhalten.</string>
+    <string name="status_stale_text">Seit über 24 Stunden keine erfolgreiche Synchronisierung. Sieh in die Zuverlässigkeits-Checkliste.</string>
+    <plurals name="status_failures_text">
+        <item quantity="one">Die letzte Synchronisierung ist fehlgeschlagen. Die App versucht es automatisch erneut.</item>
+        <item quantity="other">Die letzten %d Synchronisierungen sind fehlgeschlagen. Sieh in die Zuverlässigkeits-Checkliste.</item>
+    </plurals>
+    <string name="status_setup_title">Die Einrichtung ist nicht abgeschlossen</string>
+    <string name="status_setup_text">Es wird nichts kopiert, bis die Einrichtung abgeschlossen ist.</string>
+    <string name="status_setup_button">Einrichtung fortsetzen</string>
+    <string name="status_choose_target">Zielkalender wählen</string>
+    <string name="status_open_checklist">Zuverlässigkeits-Checkliste</string>
+    <string name="status_sync_title">Synchronisierung</string>
+    <string name="status_last_success">Letzte erfolgreiche Synchronisierung</string>
+    <string name="status_never">Noch nie</string>
+    <string name="status_next_run">Nächste Synchronisierung</string>
+    <string name="status_next_running">Läuft gerade</string>
+    <string name="status_next_soon">Startet gleich</string>
+    <string name="status_next_not_scheduled">Nicht geplant</string>
+    <string name="status_last_run">Letzter Lauf: %1$s</string>
+    <string name="status_last_run_failed">Letzter Lauf fehlgeschlagen: %1$s</string>
+    <string name="status_counts">Hinzugefügt %1$d · Aktualisiert %2$d · Gelöscht %3$d · Übersprungen %4$d</string>
+    <plurals name="status_unmatched">
+        <item quantity="one">%d geänderter Einzeltermin einer Terminserie konnte nicht genau zugeordnet werden. Die Serie zeigt vielleicht einen zusätzlichen oder veralteten Termin.</item>
+        <item quantity="other">%d geänderte Einzeltermine von Terminserien konnten nicht genau zugeordnet werden. Die Serien zeigen vielleicht zusätzliche oder veraltete Termine.</item>
+    </plurals>
+    <string name="status_copying">Kopiere %1$s nach %2$s.</string>
+    <string name="status_sync_now">Jetzt synchronisieren</string>
+    <string name="status_warnings_title">Warnungen</string>
+    <string name="status_warning_google_sync">Google-Synchronisierung ist aus, die Kopien bleiben auf diesem Telefon</string>
+    <string name="status_warning_google_sync_text">Schalte die automatische Synchronisierung und die Kalendersynchronisierung für das Google-Konto ein, damit die Kopien hochgeladen werden.</string>
+    <string name="status_warning_battery">Akkunutzung ist eingeschränkt</string>
+    <string name="status_warning_notifications">Benachrichtigungen sind aus</string>
+    <string name="status_warning_paused_title">Kein Zugriff auf einige TimeTree-Kalender</string>
+    <string name="status_warning_paused_text">%1$s: Die App hat den Zugriff verloren. Die Kopien bleiben erhalten, bis du sie entfernst.</string>
+    <string name="status_remove_paused_title">Kopien entfernen?</string>
+    <string name="status_remove_paused_text">Die Kopien von %1$s werden aus %2$s gelöscht, und die Auswahl dieser Kalender wird aufgehoben.</string>
+    <string name="status_target_unknown">dem Zielkalender</string>
+    <string name="problem_not_configured">Die Einrichtung ist nicht abgeschlossen.</string>
+    <string name="problem_no_permission">Die App hat keinen Zugriff auf deine Kalender und kann die Kopien nicht schreiben.</string>
+    <string name="problem_target_deleted">Der Google-Kalender, in den kopiert wurde, existiert nicht mehr. Wähle einen neuen.</string>
+    <string name="problem_target_unavailable">In den Zielkalender kann nicht mehr geschrieben werden: Er gehört jetzt zu einem anderen Konto, ist schreibgeschützt oder wird nicht mehr synchronisiert. Wähle erneut einen Kalender.</string>
+    <string name="problem_not_signed_in">TimeTree verlangt, dass du dich erneut anmeldest.</string>
+    <string name="problem_auth_rejected">TimeTree hat die gespeicherte Anmeldung abgelehnt, deshalb ist die automatische Anmeldung pausiert. Melde dich erneut an.</string>
+    <string name="problem_rate_limited">TimeTree bittet die App, langsamer zu machen. Sie versucht es später erneut.</string>
+    <string name="problem_rate_limited_until">TimeTree bittet die App, langsamer zu machen. Sie versucht es nach %1$s erneut.</string>
+    <string name="problem_network">Keine Verbindung zu TimeTree. Die App versucht es automatisch erneut.</string>
+    <string name="problem_write_failed">Das Schreiben in den Kalender ist fehlgeschlagen. Die App versucht es automatisch erneut.</string>
+    <string name="problem_internal">Bei der letzten Synchronisierung ist etwas schiefgelaufen.</string>
+    <string name="problem_internal_code">Bei der letzten Synchronisierung ist etwas schiefgelaufen (Code %1$d).</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Einstellungen</string>
+    <string name="settings_interval_title">Synchronisierungsintervall</string>
+    <plurals name="settings_interval_hours">
+        <item quantity="one">Jede Stunde</item>
+        <item quantity="other">Alle %d Stunden</item>
+    </plurals>
+    <string name="settings_interval_note">Nie öfter als einmal pro Stunde, wie den Kalenderbesitzern versprochen. Android kann eine Synchronisierung bis zu 15 Minuten früher oder später ausführen.</string>
+    <string name="settings_copying_title">Was kopiert wird</string>
+    <string name="settings_sources">TimeTree-Kalender</string>
+    <string name="settings_target">Zielkalender</string>
+    <string name="settings_target_value">%1$s (%2$s)</string>
+    <string name="settings_none">Keine</string>
+    <string name="settings_maintenance_title">Wartung</string>
+    <string name="settings_reliability_text">Prüfen, was Synchronisierungen im Hintergrund verhindert.</string>
+    <string name="settings_resync">Vollständig neu synchronisieren</string>
+    <string name="settings_resync_text">Liest alles erneut aus TimeTree und repariert Kopien, die geändert oder gelöscht wurden.</string>
+    <string name="settings_resync_started">Vollständige Synchronisierung gestartet</string>
+    <string name="settings_remove_all">Alle Kopien entfernen</string>
+    <string name="settings_remove_all_text_short">Löscht jede Kopie, die diese App angelegt hat, und beendet die Synchronisierung.</string>
+    <string name="settings_remove_all_title">Alle Kopien entfernen?</string>
+    <string name="settings_remove_all_text">Jeder Termin, den diese App in %1$s kopiert hat, wird gelöscht, und die Synchronisierung endet. Deine eigenen Termine bleiben unverändert. Du bleibst angemeldet und kannst wieder Kalender auswählen.</string>
+    <string name="settings_removed_title">Kopien entfernt</string>
+    <plurals name="settings_removed_text">
+        <item quantity="one">%d Kopie wurde gelöscht. Die Synchronisierung ist beendet.</item>
+        <item quantity="other">%d Kopien wurden gelöscht. Die Synchronisierung ist beendet.</item>
+    </plurals>
+    <plurals name="settings_removed_rejected">
+        <item quantity="one">%d Termin wurde nicht angerührt, weil er nicht mehr wie eine Kopie dieser App aussah.</item>
+        <item quantity="other">%d Termine wurden nicht angerührt, weil sie nicht mehr wie Kopien dieser App aussahen.</item>
+    </plurals>
+    <string name="settings_account_title">Konto</string>
+    <string name="settings_sign_out_text">Löscht die gespeicherte Anmeldung und alle App-Daten von diesem Telefon.</string>
+    <string name="settings_about_text">Wie die App funktioniert, Datenschutz, Version und Lizenz.</string>
+
+    <!-- Sign out -->
+    <string name="sign_out_title">Abmelden?</string>
+    <string name="sign_out_text">Die Synchronisierung endet, und die gespeicherte Anmeldung, die Einstellungen und die Synchronisierungsdaten werden von diesem Telefon gelöscht.</string>
+    <string name="sign_out_remove_copies">Auch alle Kopien aus dem Zielkalender entfernen</string>
+    <string name="sign_out_remove_copies_from">Auch alle Kopien aus %1$s entfernen</string>
+    <string name="sign_out_failed_removal">Die Kopien konnten nicht entfernt werden, deshalb bist du noch angemeldet. Versuche es erneut oder entferne das Häkchen, um die Kopien zu behalten.</string>
+    <string name="sign_out_failed">Einige Daten konnten nicht gelöscht werden. Bitte versuche es erneut.</string>
+
+    <!-- About -->
+    <string name="about_title">Über die App und Datenschutz</string>
+    <string name="about_what_title">Was die App macht</string>
+    <string name="about_what_text">Sie kopiert Termine in eine Richtung aus den TimeTree-Kalendern, die du auswählst, in einen Google-Kalender auf diesem Telefon, etwa stündlich. Sie schreibt nie in TimeTree. Wenn du eine Kopie bearbeitest, bleibt die Änderung, bis sich der Termin in TimeTree ändert; eine gelöschte Kopie kommt wieder. Erinnerungen folgen den Standardeinstellungen des Google-Kalenders.</string>
+    <string name="about_data_title">Wohin deine Daten gehen</string>
+    <string name="about_data_text">TimeTree → dieses Telefon → dein Google-Kalender. Die App spricht nur mit TimeTree. Die Synchronisierung von Google Kalender lädt die Kopien in dein Google-Konto hoch. Es gibt keinen eigenen Server, keine Analyse und kein Tracking.</string>
+    <string name="about_password_title">Dein Passwort</string>
+    <string name="about_password_text">Deine TimeTree-E-Mail und dein Passwort werden auf diesem Telefon gespeichert, verschlüsselt mit einem Schlüssel, der den Android-Keystore nie verlässt. Die App braucht sie, um sich erneut anzumelden, wenn TimeTree die Sitzung beendet, etwa alle zwei Wochen. Sie sind von Backups ausgeschlossen und werden beim Abmelden gelöscht.</string>
+    <string name="about_unofficial_title">Inoffiziell</string>
+    <string name="about_unofficial_text">TT Calendar Sync stammt nicht von TimeTree und ist nicht mit TimeTree verbunden. Die App nutzt die inoffizielle Web-API von TimeTree, die sich jederzeit ändern kann. Dann stoppt die Synchronisierung, bis die App aktualisiert ist.</string>
+    <string name="about_app_title">Diese App</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_certificate">Signaturzertifikat (SHA-256)</string>
+    <string name="about_certificate_unknown">Nicht verfügbar</string>
+    <string name="about_certificate_hint">Vergleiche ihn mit dem Fingerabdruck, der mit den Releases veröffentlicht wird, um sicherzugehen, dass diese App echt ist.</string>
+    <string name="about_license">Freie Software unter der Apache License 2.0.</string>
+    <string name="about_source">Quellcode</string>
 </resources>
