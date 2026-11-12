@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name" translatable="false">TT Calendar Sync</string>
+
+    <!-- Notification channels (created in App) -->
+    <string name="channel_sync_problems_name">Sync problems</string>
+    <string name="channel_sync_problems_description">Shown when copying from TimeTree stops working and needs your attention.</string>
+    <string name="channel_sync_running_name">Sync running</string>
+    <string name="channel_sync_running_description">Shown briefly while a sync runs in the foreground.</string>
+</resources>

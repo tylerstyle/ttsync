@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only additions (DESIGN.md section 8). Merged into src/main/AndroidManifest.xml. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Exported, but only the adb shell holds DUMP, so no app can reach it. -->
+        <receiver
+            android:name=".debug.DebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="de.tergelius.ttsync.debug.SYNC_NOW" />
+                <action android:name="de.tergelius.ttsync.debug.FULL_SYNC" />
+                <action android:name="de.tergelius.ttsync.debug.DROP_MAPPINGS" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

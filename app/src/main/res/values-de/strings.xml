@@ -1,0 +1,7 @@
+<resources>
+    <!-- Notification channels (created in App) -->
+    <string name="channel_sync_problems_name">Synchronisierungsprobleme</string>
+    <string name="channel_sync_problems_description">Erscheint, wenn das Kopieren aus TimeTree nicht mehr funktioniert und du eingreifen musst.</string>
+    <string name="channel_sync_running_name">Synchronisierung läuft</string>
+    <string name="channel_sync_running_description">Erscheint kurz, während eine Synchronisierung im Vordergrund läuft.</string>
+</resources>
