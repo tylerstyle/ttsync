@@ -91,6 +91,8 @@ dependencies {
 
   // Local tests: jUnit, coroutines, MockWebServer for the TimeTree client
   testImplementation(libs.junit)
+  // SyncDb store tests run the same SQL on the JVM through JDBC (store/*Test)
+  testImplementation(libs.sqlite.jdbc)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.okhttp.mockwebserver3)
 
