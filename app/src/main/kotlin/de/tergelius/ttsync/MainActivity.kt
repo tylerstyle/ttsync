@@ -7,7 +7,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import de.tergelius.ttsync.ui.LocalViewModelFactory
 import de.tergelius.ttsync.ui.theme.TTCalendarSyncTheme
 
 class MainActivity : ComponentActivity() {
@@ -15,8 +17,15 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
 
     enableEdgeToEdge()
+    val factory = appGraph.viewModelFactory
     setContent {
-      TTCalendarSyncTheme { Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { MainNavigation() } }
+      TTCalendarSyncTheme {
+        CompositionLocalProvider(LocalViewModelFactory provides factory) {
+          Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            AppRoot()
+          }
+        }
+      }
     }
   }
 }

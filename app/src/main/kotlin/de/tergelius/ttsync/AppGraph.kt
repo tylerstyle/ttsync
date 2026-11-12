@@ -1,6 +1,7 @@
 package de.tergelius.ttsync
 
 import android.content.Context
+import androidx.lifecycle.ViewModelProvider
 import de.tergelius.ttsync.calendar.CalendarGateway
 import de.tergelius.ttsync.calendar.ProviderCalendarGateway
 import de.tergelius.ttsync.mapping.DefaultEventMapper
@@ -27,6 +28,7 @@ import de.tergelius.ttsync.timetree.RequestPacer
 import de.tergelius.ttsync.timetree.TimeTreeApi
 import de.tergelius.ttsync.timetree.TimeTreeClient
 import de.tergelius.ttsync.timetree.TtSessionStore
+import de.tergelius.ttsync.ui.appViewModelFactory
 import okhttp3.OkHttpClient
 
 /**
@@ -79,6 +81,9 @@ class AppGraph(context: Context) {
   }
   val syncScheduler: SyncScheduler by lazy { WorkManagerSyncScheduler(appContext) }
   val syncNotifier: SyncNotifier by lazy { AndroidSyncNotifier(appContext) }
+
+  // ui
+  val viewModelFactory: ViewModelProvider.Factory by lazy { appViewModelFactory(this, appContext) }
 }
 
 /** The process-wide [AppGraph]. */

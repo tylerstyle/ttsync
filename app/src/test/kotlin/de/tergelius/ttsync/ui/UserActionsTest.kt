@@ -1,0 +1,212 @@
+package de.tergelius.ttsync.ui
+
+import de.tergelius.ttsync.settings.Settings
+import de.tergelius.ttsync.settings.SetupStep
+import de.tergelius.ttsync.settings.SourceCalendar
+import de.tergelius.ttsync.settings.SyncInterval
+import de.tergelius.ttsync.sync.RemovalReport
+import de.tergelius.ttsync.timetree.TtError
+import de.tergelius.ttsync.ui.UiTestGraph.Companion.NOW
+import de.tergelius.ttsync.ui.UiTestGraph.Companion.SIGNED_IN
+import de.tergelius.ttsync.ui.UiTestGraph.Companion.calendar
+import de.tergelius.ttsync.ui.UiTestGraph.Companion.target
+import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Test
+
+class UserActionsTest {
+  private val family = SourceCalendar(1, "Family")
+  private val football = SourceCalendar(2, "Football")
+  private val configured =
+    Settings(
+      sources = listOf(family, football),
+      target = target(15),
+      targetDisplayName = "TimeTree",
+      interval = SyncInterval.HOURS_3,
+      keepRunningDone = true,
+    )
+
+  @Test
+  fun signInStoresCredentialsAndContinuesWithSources() = runTest {
+    val g = UiTestGraph()
+    val next = g.actions.signIn("me@example.org", "secret")
+    assertEquals(SetupStep.SOURCES, next)
+    assertEquals("session", g.credentials.stored?.sessionId)
+    assertEquals(
+      listOf("client.signIn(me@example.org)", "credentials.save", "status.recordLoginSucceeded"),
+      g.calls.log,
+    )
+  }
+
+  @Test
+  fun signingInAgainAfterSetupStartsASync() = runTest {
+    val g = UiTestGraph(settings = configured)
+    assertEquals(SetupStep.DONE, g.actions.signIn("me@example.org", "secret"))
+    assertEquals("scheduler.runNow(full=false, MANUAL)", g.calls.log.last())
+  }
+
+  @Test
+  fun rateLimitedSignInIsRecordedForTheWorker() = runTest {
+    val g = UiTestGraph()
+    g.client.signInResult = { throw TtError.RateLimited(retryAfter = null) }
+    try {
+      g.actions.signIn("me@example.org", "secret")
+      fail("expected RateLimited")
+    } catch (_: TtError.RateLimited) {}
+    assertEquals(NOW + 30.minutes.inWholeMilliseconds, g.status.flow.value.rateLimitedUntil)
+    assertNull(g.credentials.stored)
+  }
+
+  @Test
+  fun sourcesWithoutTargetOnlySaveTheSelection() = runTest {
+    val g = UiTestGraph(credentials = SIGNED_IN)
+    val next = g.actions.saveSources(listOf(family))
+    assertEquals(SetupStep.TARGET, next)
+    assertEquals(listOf("settings.setSources([1])"), g.calls.log)
+  }
+
+  @Test
+  fun deselectingSavesFirstThenDeletesCopiesAndAddingStartsAFullSync() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    val newCal = SourceCalendar(3, "School")
+    val change = g.actions.sourceChange(listOf(family, newCal))
+    assertTrue(change.removesCopies)
+    assertEquals(listOf(football), change.removed)
+
+    g.actions.saveSources(listOf(family, newCal))
+    assertEquals(
+      listOf(
+        "settings.setSources([1, 3])",
+        "engine.deselect([2])",
+        "notifier.clearAccessLost(2)",
+        "scheduler.updatePeriodic(HOURS_3)",
+        "scheduler.runNow(full=true, SETUP)",
+      ),
+      g.calls.log,
+    )
+  }
+
+  @Test
+  fun confirmingTheFirstTargetStartsAnImmediateFullSyncAndThePeriodicWork() = runTest {
+    val g = UiTestGraph(settings = Settings(sources = listOf(family)), credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"))
+    val change = g.actions.setTarget(calendar(15, "TimeTree"))
+    assertEquals(SetupStep.KEEP_RUNNING, change.next)
+    assertNull(change.removal)
+    assertEquals(
+      listOf(
+        "settings.setTarget(15)",
+        "scheduler.updatePeriodic(HOURS_1)",
+        "scheduler.runNow(full=true, SETUP)",
+      ),
+      g.calls.log,
+    )
+    assertEquals("TimeTree", g.settings.flow.value.targetDisplayName)
+  }
+
+  @Test
+  fun switchingTargetsStopsWorkAndRemovesOldCopiesBeforeSaving() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"), calendar(16, "Other"))
+    g.engine.removal = RemovalReport(deleted = 4, rejected = 0)
+    val change = g.actions.setTarget(calendar(16, "Other"))
+    assertEquals(4, change.removal?.deleted)
+    assertEquals(
+      listOf(
+        "scheduler.cancelAll",
+        "engine.removeAllCopies(15)",
+        "settings.setTarget(16)",
+        "scheduler.updatePeriodic(HOURS_3)",
+        "scheduler.runNow(full=true, SETUP)",
+      ),
+      g.calls.log,
+    )
+  }
+
+  @Test
+  fun switchingAwayFromADeletedTargetOnlyClearsTheMappings() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(16, "Other")) // 15 was deleted on the web
+    val change = g.actions.setTarget(calendar(16, "Other"))
+    assertNull(change.removal)
+    assertTrue("engine.dropMappings" in g.calls.log)
+    assertTrue(g.calls.log.none { it.startsWith("engine.removeAllCopies") })
+  }
+
+  @Test
+  fun removeAllCopiesStopsSyncingAndReturnsToSources() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"))
+    g.engine.removal = RemovalReport(deleted = 12, rejected = 1)
+    val report = g.actions.removeAllCopies()
+    assertEquals(12, report.deleted)
+    assertEquals(
+      listOf(
+        "scheduler.cancelAll",
+        "engine.removeAllCopies(15)",
+        "engine.deselect([1, 2])",
+        "settings.setSources([])",
+      ),
+      g.calls.log.take(4),
+    )
+    assertEquals(SetupStep.SOURCES, g.actions.currentStep())
+    assertEquals(target(15), g.settings.flow.value.target)
+  }
+
+  @Test
+  fun signOutRemovesCopiesThenWipesEverything() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"))
+    assertNotNull(g.actions.signOut(removeCopies = true))
+    assertEquals(
+      listOf(
+        "scheduler.cancelAll",
+        "engine.removeAllCopies(15)",
+        "credentials.clear",
+        "settings.clear",
+        "status.clear",
+        "wipeLocalFiles",
+        "notifier.clearFailure",
+      ),
+      g.calls.log.take(7),
+    )
+    assertEquals(SetupStep.LOGIN, g.actions.currentStep())
+  }
+
+  @Test
+  fun signOutKeepsEverythingWhenTheRemovalFails() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"))
+    g.engine.removeAllError = SecurityException("no permission")
+    try {
+      g.actions.signOut(removeCopies = true)
+      fail("expected the removal error")
+    } catch (_: SecurityException) {}
+    assertNotNull(g.credentials.stored)
+    assertTrue(g.calls.log.none { it.endsWith(".clear") })
+  }
+
+  @Test
+  fun signOutWithoutRemovalLeavesTheCopies() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    assertNull(g.actions.signOut(removeCopies = false))
+    assertTrue(g.calls.log.none { it.startsWith("engine.") })
+    assertNull(g.credentials.stored)
+  }
+
+  @Test
+  fun removingTheLastPausedCalendarCancelsTheWork() = runTest {
+    val g =
+      UiTestGraph(settings = configured.copy(sources = listOf(family)), credentials = SIGNED_IN)
+    g.actions.removePaused(setOf(1))
+    assertEquals(
+      listOf("settings.setSources([])", "scheduler.cancelAll", "engine.deselect([1])"),
+      g.calls.log.take(3),
+    )
+  }
+}

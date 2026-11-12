@@ -6,4 +6,287 @@
     <string name="channel_sync_problems_description">Shown when copying from TimeTree stops working and needs your attention.</string>
     <string name="channel_sync_running_name">Sync running</string>
     <string name="channel_sync_running_description">Shown briefly while a sync runs in the foreground.</string>
+
+    <!-- Common actions -->
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="action_next">Next</string>
+    <string name="action_save">Save</string>
+    <string name="action_continue">Continue</string>
+    <string name="action_retry">Try again</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_open">Open</string>
+    <string name="action_change">Change</string>
+    <string name="action_start">Start</string>
+    <string name="action_remove">Remove</string>
+    <string name="action_allow">Allow</string>
+    <string name="action_turn_on">Turn on</string>
+    <string name="action_turn_off">Turn off</string>
+    <string name="action_remove_copies">Remove copies</string>
+    <string name="action_sign_out">Sign out</string>
+    <string name="action_sign_in_again">Sign in again</string>
+    <string name="action_open_sync_settings">Open sync settings</string>
+    <string name="action_open_app_settings">Open app settings</string>
+    <string name="action_open_autostart">Open Autostart settings</string>
+    <string name="action_open_dontkillmyapp">Open dontkillmyapp.com</string>
+    <string name="working">Working…</string>
+    <!-- %1$s: date and time, %2$s: relative time such as "5 minutes ago" -->
+    <string name="time_with_relative">%1$s (%2$s)</string>
+
+    <!-- Common errors -->
+    <string name="error_offline">No connection to TimeTree. Check your internet connection and try again.</string>
+    <string name="error_rate_limited">TimeTree asked the app to slow down. Try again in about half an hour.</string>
+    <string name="error_api_changed">TimeTree answered in a way this app doesn\'t understand. Check for an app update.</string>
+    <string name="error_unknown">Something went wrong. Please try again.</string>
+
+    <!-- Login -->
+    <string name="login_title">Sign in to TimeTree</string>
+    <string name="login_title_again">Sign in again</string>
+    <string name="login_intro">TT Calendar Sync copies the events of the TimeTree calendars you pick into one of your Google calendars on this phone. It only reads from TimeTree and never changes anything there.</string>
+    <string name="login_intro_again">TimeTree no longer accepts the stored sign-in. Sign in again to continue syncing.</string>
+    <string name="login_privacy">Your email and password are stored encrypted on this phone, so the app can sign in again when TimeTree ends the session (about every two weeks). They are sent only to TimeTree.</string>
+    <string name="login_social_title">Signed up with Google or Apple?</string>
+    <string name="login_social_text">Google and Apple sign-in don\'t work here. In the TimeTree app, set an email address and a password for your account, then sign in here with them. Or ask the calendar owner to invite a separate account that uses email and password.</string>
+    <string name="login_email">Email</string>
+    <string name="login_password">Password</string>
+    <string name="login_show_password">Show password</string>
+    <string name="login_hide_password">Hide password</string>
+    <string name="login_submit">Sign in</string>
+    <string name="login_error_rejected">TimeTree rejected the sign-in. Check your email and password. After several failed attempts TimeTree may block sign-ins for a while.</string>
+    <plurals name="login_error_rate_limited">
+        <item quantity="one">Too many attempts. TimeTree asks to wait %d minute before trying again.</item>
+        <item quantity="other">Too many attempts. TimeTree asks to wait %d minutes before trying again.</item>
+    </plurals>
+    <string name="login_error_offline">No connection to TimeTree. Check your internet connection.</string>
+
+    <!-- Sources -->
+    <string name="sources_title">TimeTree calendars</string>
+    <string name="sources_intro">Pick the TimeTree calendars to copy. Their events are copied into one Google calendar and kept up to date.</string>
+    <string name="sources_owner_note">Only pick calendars whose owner agreed to having their events copied.</string>
+    <string name="sources_empty">This TimeTree account has no calendars.</string>
+    <!-- %1$d: TimeTree calendar id, used when the calendar has no name -->
+    <string name="sources_unnamed">Calendar %1$d</string>
+    <string name="sources_unavailable">No access any more. Its copies are kept until you deselect it.</string>
+    <string name="sources_error_sign_in">TimeTree no longer accepts the stored sign-in.</string>
+    <string name="sources_remove_title">Remove copies?</string>
+    <!-- %1$s: comma-separated calendar names -->
+    <string name="sources_remove_text">The copies of these calendars will be deleted from your Google calendar: %1$s. Your own events stay untouched.</string>
+
+    <!-- Target -->
+    <string name="target_title">Target calendar</string>
+    <string name="target_intro">Choose the Google calendar the copies go into. Google Calendar then syncs them to your Google account.</string>
+    <string name="target_permission_title">Calendar access</string>
+    <string name="target_permission_text">To write the copies, the app needs access to the calendars on this phone. It only ever changes or deletes events it created itself.</string>
+    <string name="target_permission_button">Allow calendar access</string>
+    <string name="target_recommend">Recommended: a separate calendar just for TimeTree. Create one on calendar.google.com (for example \"TimeTree\"), wait until it shows up here, then tap Refresh.</string>
+    <string name="target_empty_title">No suitable calendar</string>
+    <string name="target_empty_text">Only Google calendars that you can edit and that sync to this phone are listed. Add a Google account in the phone\'s settings and turn on its calendar sync.</string>
+    <plurals name="target_other_events">
+        <item quantity="one">%d other event stays untouched</item>
+        <item quantity="other">%d other events stay untouched</item>
+    </plurals>
+    <string name="target_untouched_note">Events that the app didn\'t create are never changed or deleted.</string>
+    <string name="target_use">Use this calendar</string>
+    <string name="target_load_failed">The calendars couldn\'t be read.</string>
+    <string name="target_save_failed">The target calendar couldn\'t be changed. Please try again.</string>
+    <string name="target_switch_title">Switch target calendar?</string>
+    <!-- %1$s: old calendar name, %2$s: new calendar name -->
+    <string name="target_switch_text">The copies in %1$s will be removed. Then all events are copied into %2$s.</string>
+    <string name="target_switch_confirm">Switch</string>
+    <string name="target_old_calendar">the old calendar</string>
+    <string name="target_switched_title">Target calendar changed</string>
+    <plurals name="target_switched_removed">
+        <item quantity="one">Removed %1$d copy from the old calendar. Copying into %2$s now.</item>
+        <item quantity="other">Removed %1$d copies from the old calendar. Copying into %2$s now.</item>
+    </plurals>
+    <!-- %1$s: new calendar name -->
+    <string name="target_switched_left">The old calendar can\'t be changed safely any more, so its copies stay there. Copying into %1$s now.</string>
+    <string name="target_switched_plain">Copying into %1$s now.</string>
+
+    <!-- Keep running -->
+    <string name="keep_running_title">Keep running</string>
+    <string name="keep_running_intro">Android stops apps in the background to save battery. To copy new events about every hour, TT Calendar Sync must be allowed to keep running.</string>
+    <string name="keep_running_skip">Skip for now</string>
+    <string name="keep_running_skip_note">If you skip this, syncing may stop without notice. Status will show a warning.</string>
+    <string name="keep_running_later">You can change this later in the reliability checklist.</string>
+
+    <!-- Reliability checklist -->
+    <string name="reliability_title">Reliability checklist</string>
+    <string name="reliability_intro">Everything that decides whether syncs keep running in the background. Each fix opens the right system screen.</string>
+    <string name="reliability_all_ok">All checks passed</string>
+    <plurals name="reliability_problems">
+        <item quantity="one">%d problem</item>
+        <item quantity="other">%d problems</item>
+    </plurals>
+    <string name="reliability_footer">Some phones stop background apps in ways no app can detect. If syncs still stop, follow the tips for your phone.</string>
+    <string name="check_state_ok">OK</string>
+    <string name="check_state_problem">Problem</string>
+    <string name="check_state_unknown">Can\'t be checked</string>
+    <string name="check_state_info">Information</string>
+    <string name="check_calendar_title">Calendar access</string>
+    <string name="check_calendar_ok">Allowed.</string>
+    <string name="check_calendar_problem">Not allowed. The app can\'t write the copies.</string>
+    <string name="check_notifications_title">Notifications</string>
+    <string name="check_notifications_ok">On. You\'ll be told when syncing stops working.</string>
+    <string name="check_notifications_problem">Off. The app can\'t tell you when syncing stops working.</string>
+    <string name="check_google_sync_title">Google Calendar sync</string>
+    <string name="check_google_sync_ok">On. The copies are uploaded to your Google account.</string>
+    <string name="check_google_sync_master_off">Auto-sync is off for all accounts. The copies stay on this phone until it\'s on again.</string>
+    <string name="check_google_sync_account_off">Calendar sync is off for this Google account. The copies stay on this phone until it\'s on again.</string>
+    <string name="check_google_sync_unknown">Checked once a target calendar is chosen and calendar access is allowed.</string>
+    <string name="check_battery_title">Unrestricted battery use</string>
+    <string name="check_battery_ok">Allowed. Android lets the app sync in the background.</string>
+    <string name="check_battery_problem">Restricted. Android may delay or skip background syncs. Allow unrestricted battery use for this app.</string>
+    <string name="check_autostart_title">Autostart</string>
+    <string name="check_autostart_detail">On Xiaomi, Redmi and POCO phones, background syncs never run without Autostart. Turn it on for TT Calendar Sync. This can\'t be checked from the app.</string>
+    <string name="check_background_title">Background activity</string>
+    <string name="check_background_ok">Not restricted.</string>
+    <string name="check_background_problem">Android restricts this app in the background, so syncs don\'t run. Remove the restriction in the app\'s battery settings.</string>
+    <string name="check_unused_title">Pause app activity if unused</string>
+    <string name="check_unused_ok">Off. The app keeps syncing even if you don\'t open it for months.</string>
+    <string name="check_unused_problem">On. If you don\'t open the app for a few months, Android stops it and removes its permissions. Turn it off.</string>
+    <string name="check_dontkill_title">Tips for your phone</string>
+    <!-- %1$s: phone manufacturer, e.g. "OnePlus" -->
+    <string name="check_dontkill_detail">dontkillmyapp.com explains how %1$s phones stop background apps and how to prevent it.</string>
+    <string name="check_dontkill_detail_generic">dontkillmyapp.com explains how phone makers stop background apps and how to prevent it.</string>
+    <string name="check_bucket_title">App standby bucket</string>
+    <!-- %1$s: bucket name -->
+    <string name="check_bucket_detail">For diagnosis only: %1$s. In \"Rare\" or \"Restricted\", Android runs the app\'s background work only rarely.</string>
+    <string name="bucket_exempted">Exempted</string>
+    <string name="bucket_active">Active</string>
+    <string name="bucket_working_set">Working set</string>
+    <string name="bucket_frequent">Frequent</string>
+    <string name="bucket_rare">Rare</string>
+    <string name="bucket_restricted">Restricted</string>
+    <string name="bucket_other">Unknown</string>
+
+    <!-- Status -->
+    <string name="status_health_ok">Syncing normally</string>
+    <string name="status_health_waiting">Waiting for the first sync</string>
+    <string name="status_health_running">Syncing now…</string>
+    <string name="status_health_attention">Needs your attention</string>
+    <string name="status_health_paused">Paused</string>
+    <string name="status_health_target_deleted">Target calendar was deleted</string>
+    <string name="status_paused_text">The app lost access to all selected TimeTree calendars. Their copies are kept.</string>
+    <string name="status_stale_text">No successful sync for more than 24 hours. Check the reliability checklist.</string>
+    <plurals name="status_failures_text">
+        <item quantity="one">The last sync failed. The app tries again automatically.</item>
+        <item quantity="other">The last %d syncs failed. Check the reliability checklist.</item>
+    </plurals>
+    <string name="status_setup_title">Setup isn\'t finished</string>
+    <string name="status_setup_text">Nothing is copied until setup is complete.</string>
+    <string name="status_setup_button">Continue setup</string>
+    <string name="status_choose_target">Choose target calendar</string>
+    <string name="status_open_checklist">Reliability checklist</string>
+    <string name="status_sync_title">Sync</string>
+    <string name="status_last_success">Last successful sync</string>
+    <string name="status_never">Never</string>
+    <string name="status_next_run">Next sync</string>
+    <string name="status_next_running">Running now</string>
+    <string name="status_next_soon">Starting soon</string>
+    <string name="status_next_not_scheduled">Not scheduled</string>
+    <!-- %1$s: date and time -->
+    <string name="status_last_run">Last run: %1$s</string>
+    <string name="status_last_run_failed">Last run failed: %1$s</string>
+    <!-- Counts of the last run -->
+    <string name="status_counts">Added %1$d · Updated %2$d · Deleted %3$d · Skipped %4$d</string>
+    <plurals name="status_unmatched">
+        <item quantity="one">%d edited occurrence of a repeating event couldn\'t be matched exactly. Its series may show one extra or outdated occurrence.</item>
+        <item quantity="other">%d edited occurrences of repeating events couldn\'t be matched exactly. Their series may show extra or outdated occurrences.</item>
+    </plurals>
+    <!-- %1$s: comma-separated TimeTree calendar names, %2$s: target calendar name -->
+    <string name="status_copying">Copying %1$s into %2$s.</string>
+    <string name="status_sync_now">Sync now</string>
+    <string name="status_warnings_title">Warnings</string>
+    <string name="status_warning_google_sync">Google sync is off, copies stay on this phone</string>
+    <string name="status_warning_google_sync_text">Turn on auto-sync and calendar sync for the Google account to upload the copies.</string>
+    <string name="status_warning_battery">Battery use is restricted</string>
+    <string name="status_warning_notifications">Notifications are off</string>
+    <string name="status_warning_paused_title">No access to some TimeTree calendars</string>
+    <!-- %1$s: comma-separated calendar names -->
+    <string name="status_warning_paused_text">%1$s: the app lost access. Their copies are kept until you remove them.</string>
+    <string name="status_remove_paused_title">Remove copies?</string>
+    <!-- %1$s: calendar names, %2$s: target calendar name -->
+    <string name="status_remove_paused_text">The copies of %1$s will be deleted from %2$s, and these calendars will be deselected.</string>
+    <string name="status_target_unknown">the target calendar</string>
+    <string name="problem_not_configured">Setup isn\'t finished.</string>
+    <string name="problem_no_permission">The app has no access to your calendars, so it can\'t write the copies.</string>
+    <string name="problem_target_deleted">The Google calendar the copies went into no longer exists. Choose a new one.</string>
+    <string name="problem_target_unavailable">The target calendar can\'t be written any more: it moved to another account, became read-only or stopped syncing. Choose a calendar again.</string>
+    <string name="problem_not_signed_in">TimeTree needs you to sign in again.</string>
+    <string name="problem_auth_rejected">TimeTree rejected the stored sign-in, so automatic sign-in is paused. Sign in again.</string>
+    <string name="problem_rate_limited">TimeTree asked the app to slow down. It tries again later.</string>
+    <!-- %1$s: time -->
+    <string name="problem_rate_limited_until">TimeTree asked the app to slow down. It tries again after %1$s.</string>
+    <string name="problem_network">No connection to TimeTree. The app tries again automatically.</string>
+    <string name="problem_write_failed">Writing to the calendar failed. The app tries again automatically.</string>
+    <string name="problem_internal">Something went wrong during the last sync.</string>
+    <!-- %1$d: error code -->
+    <string name="problem_internal_code">Something went wrong during the last sync (code %1$d).</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_interval_title">Sync interval</string>
+    <plurals name="settings_interval_hours">
+        <item quantity="one">Every hour</item>
+        <item quantity="other">Every %d hours</item>
+    </plurals>
+    <string name="settings_interval_note">Never more often than once an hour, as promised to the calendar owners. Android may run a sync up to 15 minutes early or later.</string>
+    <string name="settings_copying_title">What is copied</string>
+    <string name="settings_sources">TimeTree calendars</string>
+    <string name="settings_target">Target calendar</string>
+    <!-- %1$s: calendar name, %2$s: Google account -->
+    <string name="settings_target_value">%1$s (%2$s)</string>
+    <string name="settings_none">None</string>
+    <string name="settings_maintenance_title">Maintenance</string>
+    <string name="settings_reliability_text">Check what keeps background syncs from running.</string>
+    <string name="settings_resync">Full resync</string>
+    <string name="settings_resync_text">Reads everything from TimeTree again and repairs copies that were changed or deleted.</string>
+    <string name="settings_resync_started">Full resync started</string>
+    <string name="settings_remove_all">Remove all copies</string>
+    <string name="settings_remove_all_text_short">Deletes every copy this app made and stops syncing.</string>
+    <string name="settings_remove_all_title">Remove all copies?</string>
+    <!-- %1$s: target calendar name -->
+    <string name="settings_remove_all_text">Every event this app copied into %1$s is deleted, and syncing stops. Your own events stay untouched. You stay signed in and can pick calendars again.</string>
+    <string name="settings_removed_title">Copies removed</string>
+    <plurals name="settings_removed_text">
+        <item quantity="one">%d copy was deleted. Syncing has stopped.</item>
+        <item quantity="other">%d copies were deleted. Syncing has stopped.</item>
+    </plurals>
+    <plurals name="settings_removed_rejected">
+        <item quantity="one">%d event was left alone because it no longer looked like a copy made by this app.</item>
+        <item quantity="other">%d events were left alone because they no longer looked like copies made by this app.</item>
+    </plurals>
+    <string name="settings_account_title">Account</string>
+    <string name="settings_sign_out_text">Deletes the stored sign-in and all app data from this phone.</string>
+    <string name="settings_about_text">How the app works, privacy, version and license.</string>
+
+    <!-- Sign out -->
+    <string name="sign_out_title">Sign out?</string>
+    <string name="sign_out_text">Syncing stops, and the stored sign-in, settings and sync data are deleted from this phone.</string>
+    <string name="sign_out_remove_copies">Also remove all copies from the target calendar</string>
+    <!-- %1$s: target calendar name -->
+    <string name="sign_out_remove_copies_from">Also remove all copies from %1$s</string>
+    <string name="sign_out_failed_removal">The copies couldn\'t be removed, so you are still signed in. Try again, or untick the box to keep the copies.</string>
+    <string name="sign_out_failed">Some data couldn\'t be deleted. Please try again.</string>
+
+    <!-- About -->
+    <string name="about_title">About and privacy</string>
+    <string name="about_what_title">What the app does</string>
+    <string name="about_what_text">It copies events one way from the TimeTree calendars you pick into one Google calendar on this phone, about every hour. It never writes to TimeTree. If you edit a copy, the edit lasts until the event changes in TimeTree; a deleted copy comes back. Reminders follow the Google calendar\'s defaults.</string>
+    <string name="about_data_title">Where your data goes</string>
+    <string name="about_data_text">TimeTree → this phone → your Google calendar. The app talks only to TimeTree. Google Calendar\'s own sync uploads the copies to your Google account. There is no server of our own, no analytics and no tracking.</string>
+    <string name="about_password_title">Your password</string>
+    <string name="about_password_text">Your TimeTree email and password are stored on this phone, encrypted with a key that never leaves Android\'s Keystore. The app needs them to sign in again when TimeTree ends the session, about every two weeks. They are excluded from backups and deleted when you sign out.</string>
+    <string name="about_unofficial_title">Unofficial</string>
+    <string name="about_unofficial_text">TT Calendar Sync is not made by or affiliated with TimeTree. It uses TimeTree\'s unofficial web API, which can change at any time. Then syncing stops until the app is updated.</string>
+    <string name="about_app_title">This app</string>
+    <!-- %1$s: version name -->
+    <string name="about_version">Version %1$s</string>
+    <string name="about_certificate">Signing certificate (SHA-256)</string>
+    <string name="about_certificate_unknown">Unavailable</string>
+    <string name="about_certificate_hint">Compare it with the fingerprint published with the releases to make sure this copy of the app is genuine.</string>
+    <string name="about_license">Free software under the Apache License 2.0.</string>
+    <string name="about_source">Source code</string>
 </resources>
