@@ -18,3 +18,7 @@ local.properties
 # Raw TimeTree API dumps (personal data), never commit
 /tools/out/
 **/fixtures/real/
+
+# Signing keys never go into the repo
+*.jks
+*.keystore
