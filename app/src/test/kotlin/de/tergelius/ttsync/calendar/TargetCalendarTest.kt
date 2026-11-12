@@ -48,5 +48,8 @@ class TargetCalendarTest {
     assertTrue(GoogleSyncState(masterSync = true, calendarSync = true).uploads)
     assertFalse(GoogleSyncState(masterSync = false, calendarSync = true).uploads)
     assertFalse(GoogleSyncState(masterSync = true, calendarSync = false).uploads)
+    // Android 13+ hides the account's switch from the app: unknown is not "off" (device test B2).
+    assertTrue(GoogleSyncState(masterSync = true, calendarSync = null).uploads)
+    assertFalse(GoogleSyncState(masterSync = false, calendarSync = null).uploads)
   }
 }

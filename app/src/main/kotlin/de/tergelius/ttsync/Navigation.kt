@@ -149,12 +149,15 @@ class AppNavigator(private val backStack: MutableList<NavKey>) {
 
   /**
    * A setup screen finished. [next] is the step that follows from what is stored now, so a
-   * re-login, an edit from Settings and a first setup all end up in the right place.
+   * re-login, an edit from Settings and a first setup all end up in the right place. A re-login
+   * ("Sign in again") returns to the screen that asked for it, which reloads (phase 5 review,
+   * SHOULD-FIX-3).
    */
   fun onSetupProgress(from: NavKey, next: SetupStep) {
     val editing = (from is SourcesRoute && !from.setup) || (from is TargetRoute && !from.setup)
     when {
       next == SetupStep.LOGIN -> resetTo(LoginRoute())
+      from is LoginRoute && from.reauth && canGoBack -> back()
       editing -> back()
       next == SetupStep.DONE -> {
         val status = backStack.indexOf(StatusRoute)

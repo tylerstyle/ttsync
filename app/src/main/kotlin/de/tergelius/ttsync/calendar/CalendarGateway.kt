@@ -42,7 +42,10 @@ interface CalendarGateway {
   /** The calendar with this `_ID`, or null if there is none. */
   suspend fun calendar(calendarId: Long): CalendarInfo?
 
-  /** Android's master and account calendar sync switches for the target's account. */
+  /**
+   * Android's master and account calendar sync switches for the target's account. The account
+   * switch is null (unknown) when the account is not visible to the app (see [GoogleSyncState]).
+   */
   fun googleSyncState(target: TargetCalendar): GoogleSyncState
 
   /**
@@ -64,6 +67,13 @@ interface CalendarGateway {
   suspend fun checkRows(target: TargetCalendar, expected: Map<Long, String>): Map<Long, RowCheck>
 
   /**
+   * Of the rows [eventIds] in [target] (R5, `deleted = 0`), those that Google's sync adapter has not
+   * uploaded yet (`dirty = 1`). Read-only. Null if the provider does not let the app read `dirty`;
+   * the caller then has no upload signal (device test B2).
+   */
+  suspend fun pendingUploads(target: TargetCalendar, eventIds: Collection<Long>): Set<Long>?
+
+  /**
    * Applies at most [MAX_BATCH] operations with one `applyBatch`.
    *
    * Operations that fail the R1 pre-read are not sent and get [OpResult.Rejected]; the others are
@@ -79,7 +89,8 @@ interface CalendarGateway {
   /**
    * Asks Android to upload the changes now: `ContentResolver.requestSync(account,
    * "com.android.calendar", {SYNC_EXTRAS_EXPEDITED, SYNC_EXTRAS_MANUAL})`. Never changes sync
-   * settings.
+   * settings. Best effort only: it does nothing for an account the app cannot see (Android 13+),
+   * and the provider starts Google's sync for changed rows on its own anyway.
    */
   fun requestUpload(target: TargetCalendar)
 

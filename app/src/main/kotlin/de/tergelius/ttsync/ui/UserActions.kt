@@ -35,8 +35,11 @@ import kotlinx.coroutines.withContext
  * - Before copies are deleted, scheduled work is cancelled, or the engine changes the selection
  *   under its mutex, so a periodic run cannot re-create them in between.
  * - A removal that fails ([RemovalReport.failure]) changes nothing else: the selection, the target,
- *   the settings and the sign-in stay as they were (restored where the engine had already cleared
- *   them), the periodic work is scheduled again, and the caller shows the error.
+ *   the settings and the sign-in stay as they were, the periodic work is scheduled again, and the
+ *   caller shows the error.
+ * - "Remove all copies" and removal at sign-out leave every target check to
+ *   [SyncEngine.removeAllCopies], so a missing calendar permission or a provider error comes back
+ *   as [RemovalReport.failure] instead of an exception (phase 5 review, SHOULD-FIX-1).
  * - Every change that needs new copies ends with [SyncScheduler.runNow] `(full = true, SETUP)`.
  * - Engine calls run on [io]: the engine's stores block.
  */
@@ -183,7 +186,18 @@ class UserActions(
     return currentStep()
   }
 
-  fun syncNow() = scheduler.runNow(full = false, trigger = SyncTrigger.MANUAL)
+  /**
+   * "Sync now". Within `RequestPacer.MANUAL_RUN_GAP` of a successful run nothing is queued (the
+   * scheduler would skip it as well, [SyncScheduler.recentSuccessAgo]): the caller shows "Synced N s
+   * ago" instead (device test F4).
+   */
+  suspend fun syncNow(): SyncNowResult {
+    SyncScheduler.recentSuccessAgo(status.current().lastReport, nowMillis())?.let {
+      return SyncNowResult.RecentlySynced(it)
+    }
+    scheduler.runNow(full = false, trigger = SyncTrigger.MANUAL)
+    return SyncNowResult.Started
+  }
 
   fun fullResync() = scheduler.runNow(full = true, trigger = SyncTrigger.MANUAL)
 
@@ -211,7 +225,7 @@ class UserActions(
   /**
    * "Remove all copies" (Settings): stops syncing, deletes every marked row in the target and
    * clears the selection, so setup continues at Sources. The target and sign-in are kept. If the
-   * removal fails ([RemovalReport.failure]), the selection is restored and syncing goes on.
+   * removal fails ([RemovalReport.failure]), the selection stays and syncing goes on.
    */
   suspend fun removeAllCopies(): RemovalReport {
     val current = settings.current()
@@ -219,9 +233,8 @@ class UserActions(
     val target = current.target
     val report =
       restoringOnFailure(current) {
-        if (
-          target != null && target.check(gateway.calendar(target.calendarId)) != TargetCheck.MISSING
-        ) {
+        if (target != null) {
+          // The engine checks the target itself; one that was deleted has nothing to delete.
           withContext(io) { engine.removeAllCopies(target) }
         } else {
           withContext(io) { engine.dropMappings() }
@@ -255,13 +268,9 @@ class UserActions(
     scheduler.cancelAll()
     val removal =
       restoringOnFailure(current) {
-        if (removeCopies && current.target != null) {
-          val target = current.target
-          if (target.check(gateway.calendar(target.calendarId)) == TargetCheck.MISSING) null
-          else withContext(io) { engine.removeAllCopies(target) }
-        } else {
-          null
-        }
+        val target = current.target
+        if (removeCopies && target != null) withContext(io) { engine.removeAllCopies(target) }
+        else null
       }
     if (removal?.failure != null) {
       restore(current)
@@ -299,8 +308,8 @@ class UserActions(
     }
 
   /**
-   * After a failed removal: the selection as it was (the engine may have cleared it before
-   * deleting), and the periodic work that was cancelled for the removal.
+   * After a failed removal: the selection as it was (a safety net; the engine keeps it when a
+   * removal fails), and the periodic work that was cancelled for the removal.
    */
   private suspend fun restore(before: Settings) {
     try {
@@ -309,6 +318,15 @@ class UserActions(
       scheduler.updatePeriodic(before.interval)
     }
   }
+}
+
+/** Result of [UserActions.syncNow]. */
+sealed interface SyncNowResult {
+  /** A run was requested. */
+  data object Started : SyncNowResult
+
+  /** No run needed: the last one succeeded [agoMillis] ago. */
+  data class RecentlySynced(val agoMillis: Long) : SyncNowResult
 }
 
 /** A removal of copies failed, so nothing was changed; [failure] says why. */

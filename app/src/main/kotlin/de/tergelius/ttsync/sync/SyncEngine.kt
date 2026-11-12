@@ -25,6 +25,7 @@ import de.tergelius.ttsync.store.Snapshot
 import de.tergelius.ttsync.store.SyncCursor
 import de.tergelius.ttsync.store.SyncDatabase
 import de.tergelius.ttsync.timetree.FetchedEvent
+import de.tergelius.ttsync.timetree.TimeTreeApi
 import de.tergelius.ttsync.timetree.TimeTreeClient
 import de.tergelius.ttsync.timetree.TtError
 import de.tergelius.ttsync.timetree.TtEvent
@@ -38,6 +39,7 @@ import java.time.format.DateTimeFormatter
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
@@ -55,8 +57,9 @@ import kotlinx.serialization.builtins.ListSerializer
  *   a sync, only the diff (step 5) deletes, and only in-window mappings of active calendars. The
  *   adoption scan only adopts (and removes duplicates of live, active uuids).
  * - **Idempotent.** A run after an unchanged TimeTree writes nothing.
- * - **Cursor.** A calendar's cursor advances only after all its writes succeeded and their mappings
- *   are committed.
+ * - **Cursor.** A calendar's cursor (its high-water mark, see [SyncCursor.highWater]) advances only
+ *   after all its writes succeeded and their mappings are committed. It is computed from the
+ *   fetched events, never taken from the server's `since` (a backwards paging cursor).
  * - **Privacy.** Logs carry only counts, codes and 8-character uuid prefixes.
  */
 interface SyncEngine {
@@ -70,14 +73,19 @@ interface SyncEngine {
   /**
    * Deletes every row in [target] that carries the app's marker, mapped or not, each with an
    * R1-verified delete against the uuid read from its marker; then clears the mapping table. Rows
-   * that fail R1 are left alone and counted. Call only after the user confirmed.
+   * that fail R1 are left alone and counted. A [target] that no longer exists has nothing to
+   * delete. Call only after the user confirmed.
    *
-   * [stopSyncing] (the default) is for "Remove all copies" and removal at sign-out: before deleting
-   * anything it also stops syncing, so the next run cannot recreate the copies. It empties the
+   * [stopSyncing] (the default) is for "Remove all copies" and removal at sign-out: once the deletes
+   * went through it also stops syncing, so the next run cannot recreate the copies. It empties the
    * selected sources in `SettingsRepository` and drops all snapshots, cursors and mappings; the
-   * caller cancels the periodic work. A target change passes `false`: only the copies and the
-   * mappings go, and the caller then saves the new target and runs FULL
-   * ([SyncScheduler.runNow] with `full = true`).
+   * caller cancels the periodic work first (no run can start in between: this holds the engine's
+   * mutex). A target change passes `false`: only the copies and the mappings go, and the caller
+   * then saves the new target and runs FULL ([SyncScheduler.runNow] with `full = true`).
+   *
+   * Every failure, a missing calendar permission included, comes back as [RemovalReport.failure],
+   * and then nothing else was changed: the selection, snapshots, cursors and mappings stay as they
+   * were (phase 5 review, SHOULD-FIX-1).
    */
   suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean = true): RemovalReport
 
@@ -152,12 +160,13 @@ class DefaultSyncEngine(
   override suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean): RemovalReport =
     LOCK.withLock {
       removal("remove all copies") { counter ->
-        if (stopSyncing) stopSyncing()
         if (targetWritable(target)) {
           val rows = calendarCall { gateway.findMarkedRows(target) }
           deleteVerified(target, rows.map { CalendarOp.Delete(it.eventId, it.uuid) }, counter)
         }
-        db.mappings.clear()
+        // Only after the deletes went through: a failed removal keeps everything, so syncing goes
+        // on and the user can retry (phase 5 review, SHOULD-FIX-1).
+        if (stopSyncing) stopSyncing() else db.mappings.clear()
       }
     }
 
@@ -222,7 +231,7 @@ class DefaultSyncEngine(
     return report
   }
 
-  /** "Remove all copies": nothing may be recreated, so the sources and their state go first. */
+  /** "Remove all copies" succeeded: nothing may be recreated, so the sources and their state go. */
   private suspend fun stopSyncing() {
     val current = settings.current()
     settings.setSources(emptyList())
@@ -316,12 +325,21 @@ class DefaultSyncEngine(
     }
   }
 
+  /**
+   * Best effort: `requestSync` does nothing for an account the app cannot see (Android 13+), and
+   * the provider starts Google's sync for changed rows on its own (device test B2). Nothing relies
+   * on it; [SyncReport.notUploaded] watches whether the copies really get uploaded.
+   */
   private fun requestUpload(target: TargetCalendar, uploads: Boolean?) {
     try {
-      // A manual sync request would override the user's sync switches, so only ask while they are on.
-      if (uploads ?: gateway.googleSyncState(target).uploads) gateway.requestUpload(target)
+      // A manual sync request would override the user's sync switches, so only ask while they are
+      // not known to be off.
+      if (uploads ?: gateway.googleSyncState(target).uploads) {
+        gateway.requestUpload(target)
+        log.d("requestSync asked (best effort)")
+      }
     } catch (e: Exception) {
-      log.w("requestSync failed: ${e.javaClass.simpleName}")
+      log.d("requestSync failed: ${e.javaClass.simpleName}")
     }
   }
 
@@ -399,14 +417,20 @@ class DefaultSyncEngine(
     var labels: List<TtLabel> = emptyList()
     var fetched: List<FetchedEvent> = emptyList()
     var fetchedUuids: Set<String> = emptySet()
-    var fetchedSince: Long? = null
+
+    /** The high-water mark to store once this calendar's writes succeeded. */
+    var highWater: Long? = null
+
+    /** The size of the feed, if this run read all of it (FULL). */
+    var fullPages: Int? = null
 
     /** Events of this fetch that did not decode: their state is unknown, so they are left alone. */
     var skippedUuids: Set<String> = emptySet()
 
     /**
-     * A FULL fetch that may delete copies of missing uuids: complete, and every event it skipped
-     * had a readable uuid (DESIGN.md step 5, "complete since=0 fetch").
+     * A FULL fetch that may delete copies of missing uuids: the whole feed was read, and every event
+     * it skipped had a readable uuid (DESIGN.md step 5, "complete fetch"). An INCREMENTAL fetch never
+     * proves absence, even if it happened to read the whole feed.
      */
     var provesAbsence = false
 
@@ -442,6 +466,7 @@ class DefaultSyncEngine(
     private val warnings = mutableSetOf<SyncWarning>()
     private var uploads = true
     private var unmanagedMarked = 0
+    private var notUploaded = 0
     private lateinit var target: TargetCalendar
     private lateinit var zoneId: ZoneId
     private lateinit var today: LocalDate
@@ -526,6 +551,8 @@ class DefaultSyncEngine(
           true
         }
       if (!uploads) warnings += SyncWarning.GOOGLE_SYNC_OFF
+      notUploaded = notUploaded(target) ?: 0
+      if (notUploaded > 0 && uploads) warnings += SyncWarning.NOT_UPLOADED
       zoneId = zone()
       today = Instant.ofEpochMilli(startedAt).atZone(zoneId).toLocalDate()
       windowStart = EventMapper.windowStartMillis(today, zoneId)
@@ -589,6 +616,31 @@ class DefaultSyncEngine(
       if (status.current().rateLimitedUntil != null) status.setRateLimitedUntil(null)
     }
 
+    /**
+     * The upload signal (device test B2): copies the app wrote more than [UPLOAD_GRACE_MILLIS] ago
+     * that are still `dirty`, i.e. Google's sync has not taken them. Null if unknown; it never fails
+     * the run.
+     */
+    private suspend fun notUploaded(target: TargetCalendar): Int? {
+      val cutoff = startedAt - UPLOAD_GRACE_MILLIS
+      val written =
+        db.mappings.all().filter { m ->
+          m.targetCalId == target.calendarId && m.writtenAt.let { it != null && it < cutoff }
+        }
+      if (written.isEmpty()) return 0
+      return try {
+        val pending = gateway.pendingUploads(target, written.map { it.eventId })
+        if (pending == null) log.d("upload state unknown: dirty not readable")
+        else if (pending.isNotEmpty()) log.w("${pending.size} copies not uploaded after 30 min")
+        pending?.size
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        log.w("upload state unknown: ${e.javaClass.simpleName}")
+        null
+      }
+    }
+
     private fun pause(work: CalendarWork, reason: String) {
       work.paused = true
       work.mode = null
@@ -612,22 +664,23 @@ class DefaultSyncEngine(
       if (undecodable > 0) log.w("calendar ${work.id}: $undecodable snapshots unreadable; FULL")
 
       val cursor = work.cursor
-      val lastFull = cursor.lastFullAt
-      val full =
-        request.forceFull ||
-          mapperChanged ||
-          undecodable > 0 ||
-          cursor.since == null ||
-          lastFull == null ||
-          startedAt - lastFull >= FULL_INTERVAL_MILLIS ||
-          startedAt < lastFull
+      val fullReason = fullReason(cursor, mapperChanged, undecodable)
+      val full = fullReason != null
       work.mode = if (full) SyncMode.FULL else SyncMode.INCREMENTAL
+      val why =
+        fullReason
+          ?: "last FULL ${minutesSince(cursor.lastFullAt)} min ago, pages=${cursor.lastFullPages}"
+      log.i("calendar ${work.id}: ${work.mode} ($why)")
 
       try {
         var labels = if (full) null else decodeLabels(cursor.labelsJson)
         val labelsFresh = labels == null
         if (labels == null) labels = timeTree { client.labels(work.id) }
-        val result = timeTree { client.events(work.id, if (full) null else cursor.since) }
+        // INCREMENTAL reads from the top of the feed (newest change first) down to the known
+        // high-water mark, minus an overlap for changes committed with a slightly older timestamp.
+        val stopAt =
+          if (full) null else cursor.highWater?.minus(TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds)
+        val result = timeTree { client.events(work.id, stopAt) }
         if (!labelsFresh) {
           val known = labels.mapTo(HashSet()) { it.id }
           val unknownLabel =
@@ -635,12 +688,21 @@ class DefaultSyncEngine(
           if (unknownLabel) labels = timeTree { client.labels(work.id) }
         }
         work.labels = labels
+        if (full) work.fullPages = result.feedPages
         work.fetched = result.events
         work.fetchedUuids = result.events.mapTo(HashSet()) { it.event.uuid }
-        work.fetchedSince = result.since
+        // FULL: the newest change of the whole feed (0 for an empty one). INCREMENTAL: never lower
+        // than before, since it re-reads only the top of the feed.
+        work.highWater =
+          if (full) result.highWater ?: 0L
+          else maxOf(cursor.highWater ?: 0L, result.highWater ?: Long.MIN_VALUE)
         work.skippedUuids = result.skippedUuids
-        work.provesAbsence = full && result.skippedMalformed <= result.skippedUuids.size
-        log.i("calendar ${work.id}: ${work.mode} fetched=${result.events.size} pages=${result.pages}")
+        work.provesAbsence =
+          full && result.complete && result.skippedMalformed <= result.skippedUuids.size
+        log.i(
+          "calendar ${work.id}: ${work.mode} fetched=${result.events.size} pages=${result.pages} " +
+            "complete=${result.complete}"
+        )
         if (result.skippedMalformed > 0) {
           log.w(
             "calendar ${work.id}: ${result.skippedMalformed} unreadable events left alone " +
@@ -651,6 +713,31 @@ class DefaultSyncEngine(
         pause(work, "access lost (http=${e.httpStatus})")
       }
     }
+
+    /**
+     * Why this calendar's run must be FULL, or null for INCREMENTAL (DESIGN.md section 5). Deleted
+     * events seem to vanish from the feed rather than come back as tombstones, so only a FULL sees
+     * them: a small feed ([SMALL_FEED_PAGES] pages or fewer at its last FULL) is read completely on
+     * every run, a larger one at least every [FULL_INTERVAL_MILLIS].
+     */
+    private fun fullReason(cursor: SyncCursor, mapperChanged: Boolean, undecodable: Int): String? {
+      val lastFull = cursor.lastFullAt
+      val pages = cursor.lastFullPages
+      return when {
+        request.forceFull -> "forced"
+        mapperChanged -> "mapper version changed"
+        undecodable > 0 -> "unreadable snapshots"
+        cursor.highWater == null -> "no high-water mark"
+        lastFull == null || pages == null -> "no FULL recorded"
+        pages <= SMALL_FEED_PAGES -> "small feed, pages=$pages"
+        startedAt < lastFull -> "clock went back"
+        startedAt - lastFull >= FULL_INTERVAL_MILLIS ->
+          "last FULL ${minutesSince(lastFull)} min ago, pages=$pages"
+        else -> null
+      }
+    }
+
+    private fun minutesSince(at: Long?): Long? = at?.let { (startedAt - it) / 60_000 }
 
     private fun mapEvents(work: CalendarWork) {
       val fetchedEvents = work.fetched.map { it.event }
@@ -827,7 +914,8 @@ class DefaultSyncEngine(
         if (mappings[p.uuid]?.eventId == p.eventId) removed += p.uuid
       }
       fun remember(p: Planned, eventId: Long) {
-        upserts += Mapping(p.uuid, work.id, target.calendarId, eventId, p.hash!!, p.write!!.endAt)
+        upserts +=
+          Mapping(p.uuid, work.id, target.calendarId, eventId, p.hash!!, p.write!!.endAt, nowMillis())
       }
       for ((p, result) in chunk.zip(results)) {
         when (result) {
@@ -891,10 +979,11 @@ class DefaultSyncEngine(
         db.cursors.put(
           SyncCursor(
             ttCalId = work.id,
-            since = work.fetchedSince,
+            highWater = work.highWater,
             lastFullAt = if (work.mode == SyncMode.FULL) startedAt else work.cursor.lastFullAt,
             state = CalendarState.ACTIVE,
             labelsJson = TtJson.encodeToString(LABELS, work.labels),
+            lastFullPages = work.fullPages ?: work.cursor.lastFullPages,
           )
         )
       }
@@ -925,6 +1014,7 @@ class DefaultSyncEngine(
         counts = totals,
         calendars = calendars,
         warnings = warnings.toSet(),
+        notUploaded = notUploaded,
       )
     }
 
@@ -950,8 +1040,17 @@ class DefaultSyncEngine(
     /** The process-wide lock: runs and user actions never overlap. */
     private val LOCK = Mutex()
 
-    /** A calendar gets a FULL run at least this often. */
-    val FULL_INTERVAL_MILLIS: Long = 24.hours.inWholeMilliseconds
+    /**
+     * A feed of at most this many pages at its last FULL gets a FULL on every run: a few requests,
+     * and deletions (which do not show up in the feed) reach Google within the sync interval.
+     */
+    const val SMALL_FEED_PAGES = 3
+
+    /** A larger feed gets INCREMENTAL runs, with a FULL at least this often. */
+    val FULL_INTERVAL_MILLIS: Long = 6.hours.inWholeMilliseconds
+
+    /** A copy still `dirty` this long after the app wrote it counts as not uploaded. */
+    val UPLOAD_GRACE_MILLIS: Long = 30.minutes.inWholeMilliseconds
 
     /**
      * Rounds of adopt-or-insert after R1 refusals. Each refusal excludes that row, and an insert is

@@ -19,6 +19,7 @@ import de.tergelius.ttsync.sync.SyncReport
 import de.tergelius.ttsync.sync.SyncScheduler
 import de.tergelius.ttsync.ui.DeviceChecks
 import de.tergelius.ttsync.ui.DeviceState
+import de.tergelius.ttsync.ui.SyncNowResult
 import de.tergelius.ttsync.ui.UserActions
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.delay
@@ -45,6 +46,9 @@ data class LiveChecks(
 enum class StatusWarning {
   /** "Google sync is off, copies stay on this phone." */
   GOOGLE_SYNC_OFF,
+
+  /** "N changes not uploaded to Google yet" ([StatusUiState.notUploaded], device test B2). */
+  NOT_UPLOADED,
   BATTERY_RESTRICTED,
   BACKGROUND_RESTRICTED,
   NOTIFICATIONS_OFF,
@@ -74,12 +78,16 @@ data class StatusUiState(
   val targetName: String? = null,
   val notificationPermissionMissing: Boolean = false,
   val nowMillis: Long = 0,
+  /** Copies still waiting for Google's sync 30 min after they were written (last report). */
+  val notUploaded: Int = 0,
   // Dialogs and one-off actions
   val confirmRemovePaused: Boolean = false,
   val removingPaused: Boolean = false,
   val actionFailed: Boolean = false,
   /** "Remove copies" of paused calendars failed; they stay selected. */
   val removalFailed: Boolean = false,
+  /** One-off: "Sync now" needed no run, the last one succeeded this many seconds ago. */
+  val syncedSecondsAgo: Long? = null,
 ) {
   /** "Sync now" is pointless while a run is going on or about to start. */
   val canSyncNow: Boolean
@@ -131,10 +139,13 @@ data class StatusUiState(
           liveProblem != null -> SyncHealth.NEEDS_ATTENTION
           else -> effective.health(running = false, nowMillis = nowMillis)
         }
+      // Known to be off only: an account Android hides from the app counts as unknown (B2).
       val googleSyncOff =
         live.googleSync?.let { !it.uploads } ?: (report != null && status.googleSyncOff)
+      val notUploaded = report?.notUploaded ?: 0
       val warnings = buildList {
         if (googleSyncOff) add(StatusWarning.GOOGLE_SYNC_OFF)
+        else if (notUploaded > 0) add(StatusWarning.NOT_UPLOADED)
         if (device != null && !device.batteryUnrestricted) add(StatusWarning.BATTERY_RESTRICTED)
         if (device?.backgroundRestricted == true) add(StatusWarning.BACKGROUND_RESTRICTED)
         if (device != null && !device.notificationsEnabled) add(StatusWarning.NOTIFICATIONS_OFF)
@@ -162,6 +173,7 @@ data class StatusUiState(
         targetName = settings.targetDisplayName,
         notificationPermissionMissing = device?.notificationPermissionMissing == true,
         nowMillis = nowMillis,
+        notUploaded = notUploaded,
       )
     }
 
@@ -193,6 +205,7 @@ class StatusViewModel(
     val removingPaused: Boolean = false,
     val actionFailed: Boolean = false,
     val removalFailed: Boolean = false,
+    val syncedSecondsAgo: Long? = null,
   )
 
   private val stored =
@@ -213,6 +226,7 @@ class StatusViewModel(
             removingPaused = d.removingPaused,
             actionFailed = d.actionFailed,
             removalFailed = d.removalFailed,
+            syncedSecondsAgo = d.syncedSecondsAgo,
           )
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatusUiState())
@@ -246,10 +260,29 @@ class StatusViewModel(
     }
   }
 
+  /**
+   * "Sync now". Right after a successful run there is nothing to do: the screen says "Synced N s
+   * ago" instead of queueing a delayed run (device test F4).
+   */
   fun syncNow() {
-    val failed = runCatching { actions.syncNow() }.isFailure
-    dialogs.update { it.copy(actionFailed = failed, removalFailed = false) }
+    viewModelScope.launch {
+      val result =
+        try {
+          actions.syncNow()
+        } catch (e: CancellationException) {
+          throw e
+        } catch (_: Exception) {
+          null
+        }
+      val ago = (result as? SyncNowResult.RecentlySynced)?.agoMillis?.let { it / 1000 }
+      dialogs.update {
+        it.copy(actionFailed = result == null, removalFailed = false, syncedSecondsAgo = ago)
+      }
+    }
   }
+
+  /** The "Synced N s ago" note was shown. */
+  fun onSyncedShown() = dialogs.update { it.copy(syncedSecondsAgo = null) }
 
   /** Calendar permission granted again from the Status fix button: sync right away. */
   fun onPermissionResult(granted: Boolean) {

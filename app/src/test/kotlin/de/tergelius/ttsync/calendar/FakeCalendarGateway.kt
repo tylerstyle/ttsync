@@ -41,6 +41,12 @@ class FakeCalendarGateway : CalendarGateway {
 
   var permission = true
   var syncState = GoogleSyncState(masterSync = true, calendarSync = true)
+
+  /** Rows written by the app that Google's sync has not uploaded yet (`dirty = 1`). */
+  val dirty = HashSet<Long>()
+
+  /** False: the provider refuses to show `dirty` ([pendingUploads] returns null). */
+  var dirtyReadable = true
   var uploadRequests = 0
     private set
 
@@ -97,6 +103,9 @@ class FakeCalendarGateway : CalendarGateway {
     rows[id] = rows.getValue(id).copy(deleted = true)
   }
 
+  /** Google's sync adapter uploads every pending change. */
+  fun uploadAll() = dirty.clear()
+
   /** Storage reset of the calendar provider: every row disappears. */
   fun wipeRows() = rows.clear()
 
@@ -141,6 +150,14 @@ class FakeCalendarGateway : CalendarGateway {
       .mapNotNull { row -> row.markerUuid?.let { MarkedRow(row.id, it) } }
   }
 
+  override suspend fun pendingUploads(target: TargetCalendar, eventIds: Collection<Long>): Set<Long>? {
+    requirePermission()
+    if (!dirtyReadable) return null
+    return eventIds
+      .filter { id -> id in dirty && rows[id]?.let { it.calendarId == target.calendarId && !it.deleted } == true }
+      .toSet()
+  }
+
   override suspend fun checkRows(target: TargetCalendar, expected: Map<Long, String>): Map<Long, RowCheck> {
     requirePermission()
     return expected.mapValues { (id, uuid) -> GatewayRules.check(observe(id), target.calendarId, uuid) }
@@ -176,6 +193,7 @@ class FakeCalendarGateway : CalendarGateway {
           assertManaged(values.keys - GatewayRules.COL_CALENDAR_ID)
           val id = nextId++
           rows[id] = Row(id, values[GatewayRules.COL_CALENDAR_ID] as Long, false, values - GatewayRules.COL_CALENDAR_ID)
+          dirty += id
           results += OpResult.Inserted(id)
         }
         is CalendarOp.Update -> {
@@ -184,11 +202,13 @@ class FakeCalendarGateway : CalendarGateway {
           assertManaged(values.keys)
           val row = rows.getValue(op.eventId)
           rows[op.eventId] = row.copy(values = row.values + values)
+          dirty += op.eventId
           results += OpResult.Updated
         }
         is CalendarOp.Delete -> {
           if (!precondition(op.eventId, target, op.uuid)) return abort(before, beforeNext)
           rows[op.eventId] = rows.getValue(op.eventId).copy(deleted = true)
+          dirty += op.eventId
           results += OpResult.Deleted
         }
       }
@@ -206,6 +226,7 @@ class FakeCalendarGateway : CalendarGateway {
   private fun abort(before: TreeMap<Long, Row>, beforeNext: Long): BatchResult {
     rows.clear()
     rows.putAll(before)
+    dirty.retainAll(rows.keys)
     nextId = beforeNext
     return BatchResult.Aborted
   }

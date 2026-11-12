@@ -16,9 +16,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -99,6 +101,14 @@ fun StatusScreen(
     viewModel.refresh()
     onPauseOrDispose {}
   }
+  val snackbar = remember { SnackbarHostState() }
+  val resources = LocalResources.current
+  LaunchedEffect(state.syncedSecondsAgo) {
+    state.syncedSecondsAgo?.let { seconds ->
+      viewModel.onSyncedShown()
+      snackbar.showSnackbar(resources.getString(R.string.status_synced_recently, seconds))
+    }
+  }
 
   // POST_NOTIFICATIONS is asked here (DESIGN.md section 8), once per app start until granted;
   // after two denials Android stops showing the dialog and the warning's button opens settings.
@@ -138,7 +148,7 @@ fun StatusScreen(
       openAppDetails = { launchSettings(emptyList()) },
       removePaused = viewModel::askRemovePaused,
     )
-  StatusContent(state = state, navigation = navigation, fixes = fixes)
+  StatusContent(state = state, navigation = navigation, fixes = fixes, snackbar = snackbar)
 
   if (state.confirmRemovePaused) {
     val resources = LocalResources.current
@@ -164,10 +174,16 @@ private fun calendarNames(calendars: List<SourceCalendar>, unnamed: (Long) -> St
   calendars.joinToString(", ") { it.name.ifBlank { unnamed(it.id) } }
 
 @Composable
-fun StatusContent(state: StatusUiState, navigation: StatusNavigation, fixes: StatusFixes) {
+fun StatusContent(
+  state: StatusUiState,
+  navigation: StatusNavigation,
+  fixes: StatusFixes,
+  snackbar: SnackbarHostState? = null,
+) {
   TtScaffold(
     title = stringResource(R.string.app_name),
     onBack = null,
+    snackbarHostState = snackbar,
     actions = {
       IconButton(onClick = navigation.openSettings) {
         Icon(
@@ -420,14 +436,26 @@ private fun WarningsCard(state: StatusUiState, fixes: StatusFixes) {
     }
     state.warnings.forEachIndexed { index, warning ->
       if (index > 0 || state.pausedCalendars.isNotEmpty()) RowDivider()
-      WarningRow(warning, fixes)
+      WarningRow(warning, state, fixes)
     }
   }
 }
 
 @Composable
-private fun WarningRow(warning: StatusWarning, fixes: StatusFixes) {
+private fun WarningRow(warning: StatusWarning, state: StatusUiState, fixes: StatusFixes) {
   when (warning) {
+    StatusWarning.NOT_UPLOADED ->
+      CheckRow(
+        tone = Tone.PROBLEM,
+        title =
+          pluralStringResource(R.plurals.status_warning_not_uploaded, state.notUploaded, state.notUploaded),
+        detail = stringResource(R.string.status_warning_not_uploaded_text),
+        action = {
+          Button(onClick = fixes.openSyncSettings) {
+            Text(stringResource(R.string.action_open_sync_settings))
+          }
+        },
+      )
     StatusWarning.GOOGLE_SYNC_OFF ->
       CheckRow(
         tone = Tone.PROBLEM,

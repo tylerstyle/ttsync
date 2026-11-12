@@ -57,7 +57,12 @@ fun appViewModelFactory(graph: AppGraph, context: Context): ViewModelProvider.Fa
       )
     }
     initializer {
-      ReliabilityViewModel(deviceChecks, graph.settingsRepository, graph.calendarGateway)
+      ReliabilityViewModel(
+        deviceChecks,
+        graph.settingsRepository,
+        graph.calendarGateway,
+        graph.statusRepository,
+      )
     }
     initializer { SettingsViewModel(graph.settingsRepository, actions) }
     initializer { SignOutViewModel(graph.settingsRepository, actions) }

@@ -1,6 +1,7 @@
 package de.tergelius.ttsync.sync
 
 import de.tergelius.ttsync.calendar.CalendarOp
+import de.tergelius.ttsync.calendar.GoogleSyncState
 import de.tergelius.ttsync.calendar.TargetCalendar
 import de.tergelius.ttsync.calendar.TargetCheck
 import de.tergelius.ttsync.calendar.TargetUnavailableException
@@ -20,6 +21,7 @@ import de.tergelius.ttsync.sync.EngineHarness.Companion.NEW_TARGET
 import de.tergelius.ttsync.sync.EngineHarness.Companion.OLD
 import de.tergelius.ttsync.sync.EngineHarness.Companion.SERIES
 import de.tergelius.ttsync.sync.EngineHarness.Companion.TARGET
+import de.tergelius.ttsync.timetree.TimeTreeApi
 import de.tergelius.ttsync.timetree.TtError
 import de.tergelius.ttsync.timetree.TtLabel
 import kotlin.time.Duration.Companion.minutes
@@ -62,7 +64,7 @@ class SyncEngineTest {
 
     assertEquals(copies.mapValues { it.value.id }, h.store.mappings.all().associate { it.uuid to it.eventId })
     val cursor = h.store.cursors.get(CAL_A)!!
-    assertNotNull(cursor.since)
+    assertEquals(h.client.newestChange(CAL_A), cursor.highWater)
     assertEquals(h.now, cursor.lastFullAt)
     assertNull(h.store.meta.get(MetaKeys.RUN_IN_PROGRESS))
     assertEquals(1, h.gateway.uploadRequests)
@@ -103,13 +105,181 @@ class SyncEngineTest {
     assertEquals(1, h.gateway.uploadRequests)
   }
 
+  // Incremental reads of the real feed (newest change first, paged backwards) -------------------
+
+  private val overlap = TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds
+
   @Test
-  fun reDeliveredEventsWriteNothingWhenSinceIsLowerThanUpdatedAt() = runTest {
-    h.client.sinceLag = 5 // the real API may return a since below the newest updated_at
+  fun incrementalAfterAFullRunPicksUpAnEditANewEventAndATombstone() = runTest {
+    // The bug from the device test: the app stored the server's last `since` (a cursor for OLDER
+    // events) and the next INCREMENTAL run asked for `?since=<that>`, which returned nothing.
     h.sync().assertOk()
+    val known = h.store.cursors.get(CAL_A)!!.highWater!!
+    val a1 = idOf(A1)
+    val a2 = idOf(A2)
+    val a4 = "aaaa0004aaaa0004aaaa0004aaaa0004"
+    h.client.edit(CAL_A, A1) { it.copy(title = "Brunch") }
+    h.client.put(CAL_A, h.timed(a4, day = 3, title = "New"))
+    h.client.deactivate(CAL_A, A2)
+    h.client.pageRequests.clear()
+
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.INCREMENTAL, report.calendars.single().mode)
+    assertEquals(
+      SyncCounts(added = 1, updated = 1, deleted = 1),
+      report.counts.copy(skipped = 0, unmanagedMarked = 0),
+    )
+    assertEquals("Brunch", h.gateway.rows.getValue(a1).title)
+    assertTrue(h.gateway.rows.getValue(a2).deleted)
+    assertEquals(setOf(A1, A3, SERIES, a4), h.copies().keys)
+    // From the top, never with a stored `since`: the three changes fill page 1 and half of page 2,
+    // page 3 starts with known events.
+    assertEquals("events:1:${known - overlap}", h.client.requests.last())
+    assertEquals("1:top", h.client.pageRequests.first())
+    assertEquals(3, h.client.pageRequests.size)
+    // The new high-water mark is the newest change (the tombstone's), not a server cursor.
+    assertEquals(h.client.newestChange(CAL_A), h.store.cursors.get(CAL_A)!!.highWater)
+    assertEquals(h.client.event(CAL_A, A2).deactivatedAt, h.store.cursors.get(CAL_A)!!.highWater)
+    h.assertForeignUntouched()
+
+    assertEquals(0, h.sync().assertOk().counts.writes)
+  }
+
+  @Test
+  fun incrementalStopsAfterTheFirstPageWhenTheTopOfTheFeedIsKnown() = runTest {
+    h.sync().assertOk()
+    h.client.pageRequests.clear()
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.INCREMENTAL, report.calendars.single().mode)
+    assertEquals(0, report.counts.writes)
+    assertEquals(listOf("1:top"), h.client.pageRequests)
+  }
+
+  @Test
+  fun fullRunReadsEveryBackwardPageAndRereadsTheTop() = runTest {
+    // 7 events, 2 a page: 4 pages backwards, then the top once more (EventFeed).
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.FULL, report.calendars.single().mode)
+    assertEquals(h.liveA, h.copies().keys)
+    val feed = h.client.all(CAL_A).sortedByDescending { it.updatedAt }
+    assertEquals(
+      listOf(
+        "1:top",
+        "1:since=${feed[1].updatedAt - 1}",
+        "1:since=${feed[3].updatedAt - 1}",
+        "1:since=${feed[5].updatedAt - 1}",
+        "1:top",
+      ),
+      h.client.pageRequests,
+    )
+    val cursor = h.store.cursors.get(CAL_A)!!
+    assertEquals(h.client.newestChange(CAL_A), cursor.highWater)
+    assertEquals(4, cursor.lastFullPages) // the feed, without the second pass
+  }
+
+  @Test
+  fun anEventEditedWhileAFullRunReadsThePagesIsNotTakenForDeleted() = runTest {
+    h.sync().assertOk()
+    val a1 = idOf(A1)
+    // A1 is the oldest change, on the last page. Edited before that page is read, it moves to the
+    // top, which the first pass has already read: only the second pass from the top sees it.
+    h.client.beforePage = { page -> if (page == 2) h.client.edit(CAL_A, A1) { it.copy(title = "Moved") } }
+    val report = h.sync(full = true).assertOk()
+    h.client.beforePage = null
+    assertEquals(0, report.counts.deleted)
+    assertEquals(1, report.counts.updated)
+    assertEquals("Moved", h.gateway.rows.getValue(a1).title)
+    assertFalse(h.gateway.rows.getValue(a1).deleted)
+  }
+
+  @Test
+  fun eventsInsideTheOverlapAreReadAgainButWriteNothing() = runTest {
+    h.client.step = 1_000 // every change within FEED_OVERLAP of the newest one
+    h.client.all(CAL_A).forEach { h.client.put(CAL_A, it) }
+    h.sync().assertOk()
+    h.client.pageRequests.clear()
     val again = h.sync().assertOk()
-    assertTrue(h.client.requests.last().startsWith("events:1:"))
+    assertEquals(SyncMode.INCREMENTAL, again.calendars.single().mode)
+    assertEquals(4, h.client.pageRequests.size) // the whole feed: none is old enough to stop at
     assertEquals(0, again.counts.writes)
+  }
+
+  @Test
+  fun anEmptyCalendarStoresHighWaterZero() = runTest {
+    h.client.all(CAL_A).forEach { h.client.purge(CAL_A, it.uuid) }
+    h.sync().assertOk()
+    assertEquals(0L, h.store.cursors.get(CAL_A)!!.highWater)
+    assertEquals(1, h.store.cursors.get(CAL_A)!!.lastFullPages)
+    h.client.put(CAL_A, h.timed(A1, day = 0, title = "Breakfast"))
+    assertEquals(1, h.sync().assertOk().counts.added)
+  }
+
+  // When a run is FULL (deleted events vanish from the feed, so only a FULL sees them) ------------
+
+  @Test
+  fun aSmallFeedIsReadCompletelyOnEveryRunSoDeletionsArriveWithinTheInterval() = runTest {
+    h.client.pageSize = 10 // calendar A fits on one page
+    h.sync().assertOk()
+    assertEquals(1, h.store.cursors.get(CAL_A)!!.lastFullPages)
+    h.client.purge(CAL_A, A3) // deleted in TimeTree: gone from the feed, no tombstone
+    h.now += 60 * 60_000L
+
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.FULL, report.calendars.single().mode)
+    assertEquals(1, report.counts.deleted)
+    assertFalse(A3 in h.copies())
+    assertTrue(h.log.lines.any { it == "I calendar 1: FULL (small feed, pages=1)" })
+    h.assertForeignUntouched()
+  }
+
+  @Test
+  fun aLargerFeedRunsIncrementalWithAFullAtLeastEverySixHours() = runTest {
+    h.sync().assertOk() // 4 pages
+    h.now += 6 * 60 * 60_000L - 60_000L
+    assertEquals(SyncMode.INCREMENTAL, h.sync().assertOk().calendars.single().mode)
+    assertTrue(h.log.lines.any { it == "I calendar 1: INCREMENTAL (last FULL 359 min ago, pages=4)" })
+
+    h.client.purge(CAL_A, A3)
+    h.now += 60_000L
+    val full = h.sync().assertOk()
+    assertEquals(SyncMode.FULL, full.calendars.single().mode)
+    assertEquals(1, full.counts.deleted)
+    assertTrue(h.log.lines.any { it == "I calendar 1: FULL (last FULL 360 min ago, pages=4)" })
+    assertEquals(6 * 60 * 60_000L, DefaultSyncEngine.FULL_INTERVAL_MILLIS)
+  }
+
+  @Test
+  fun theFeedSizeOfTheLastFullDecidesAndIsRecordedAgain() = runTest {
+    h.client.pageSize = 3 // 7 events: 3 pages, still small
+    h.sync().assertOk()
+    assertEquals(3, h.store.cursors.get(CAL_A)!!.lastFullPages)
+    assertEquals(3, DefaultSyncEngine.SMALL_FEED_PAGES)
+    repeat(3) { i -> h.client.put(CAL_A, h.timed("c%031d".format(i), day = 1, title = "E$i")) }
+    assertEquals(SyncMode.FULL, h.sync().assertOk().calendars.single().mode) // records 4 pages
+    assertEquals(4, h.store.cursors.get(CAL_A)!!.lastFullPages)
+    assertEquals(SyncMode.INCREMENTAL, h.sync().assertOk().calendars.single().mode)
+    assertEquals(4, h.store.cursors.get(CAL_A)!!.lastFullPages) // kept by INCREMENTAL runs
+  }
+
+  @Test
+  fun aMissingHighWaterMarkForcesAFullRun() = runTest {
+    h.sync().assertOk()
+    val cursor = h.store.cursors.get(CAL_A)!!
+    h.store.cursors.put(cursor.copy(highWater = null)) // as after the upgrade from schema 1
+    assertEquals(SyncMode.FULL, h.sync().assertOk().calendars.single().mode)
+    assertEquals(h.client.newestChange(CAL_A), h.store.cursors.get(CAL_A)!!.highWater)
+  }
+
+  @Test
+  fun anIncrementalRunNeverDeletesByAbsence() = runTest {
+    h.sync().assertOk()
+    h.client.pageSize = 100 // the incremental read happens to see the whole feed
+    h.client.purge(CAL_A, A3)
+    h.client.edit(CAL_A, A1) { it.copy(title = "Changed") }
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.INCREMENTAL, report.calendars.single().mode)
+    assertEquals(0, report.counts.deleted)
+    assertTrue(A3 in h.copies())
   }
 
   // E3, E4 --------------------------------------------------------------------------------------
@@ -450,7 +620,7 @@ class SyncEngineTest {
     val report = h.sync().assertOk()
     assertEquals(1, report.counts.updated)
     assertEquals(1, report.counts.added)
-    assertNotEquals(cursor.since, h.store.cursors.get(CAL_A)!!.since)
+    assertNotEquals(cursor.highWater, h.store.cursors.get(CAL_A)!!.highWater)
   }
 
   @Test
@@ -586,6 +756,56 @@ class SyncEngineTest {
     assertTrue(SyncWarning.GOOGLE_SYNC_OFF in report.warnings)
     assertEquals(4, report.counts.added)
     assertEquals(0, h.gateway.uploadRequests)
+  }
+
+  // Google sync and uploads (device test B2) -----------------------------------------------------
+
+  @Test
+  fun anAccountSwitchAndroidHidesIsNoWarningAndTheSyncRequestIsBestEffort() = runTest {
+    // Android 13+ answers "off" for an account the app cannot see: the gateway reports unknown.
+    h.gateway.syncState = GoogleSyncState(masterSync = true, calendarSync = null)
+    val report = h.sync().assertOk()
+    assertTrue(report.warnings.isEmpty())
+    assertEquals(1, h.gateway.uploadRequests)
+  }
+
+  @Test
+  fun copiesGoogleHasNotTakenHalfAnHourLaterAreReported() = runTest {
+    h.sync().assertOk()
+    assertTrue(h.store.mappings.all().all { it.writtenAt == h.now })
+    h.now += 29 * 60_000L
+    assertEquals(0, h.sync().assertOk().notUploaded) // Google's sync may still be on its way
+
+    h.now += 2 * 60_000L
+    val late = h.sync().assertOk()
+    assertEquals(4, late.notUploaded)
+    assertEquals(setOf(SyncWarning.NOT_UPLOADED), late.warnings)
+
+    h.gateway.uploadAll()
+    h.now += 60_000L
+    val uploaded = h.sync().assertOk()
+    assertEquals(0, uploaded.notUploaded)
+    assertTrue(uploaded.warnings.isEmpty())
+  }
+
+  @Test
+  fun anUnreadableDirtyColumnMeansNoSignalNotAFailure() = runTest {
+    h.sync().assertOk()
+    h.gateway.dirtyReadable = false
+    h.now += 60 * 60_000L
+    val report = h.sync().assertOk()
+    assertEquals(0, report.notUploaded)
+    assertTrue(report.warnings.isEmpty())
+  }
+
+  @Test
+  fun aKnownOffSwitchIsTheOnlyWarningForPendingUploads() = runTest {
+    h.sync().assertOk()
+    h.gateway.syncState = GoogleSyncState(masterSync = false, calendarSync = null)
+    h.now += 60 * 60_000L
+    val report = h.sync().assertOk()
+    assertEquals(4, report.notUploaded)
+    assertEquals(setOf(SyncWarning.GOOGLE_SYNC_OFF), report.warnings)
   }
 
   // TimeTree errors -----------------------------------------------------------------------------
@@ -781,17 +1001,42 @@ class SyncEngineTest {
   }
 
   @Test
-  fun removeAllCopiesOnAnUnwritableTargetDeletesNothing() = runTest {
+  fun removeAllCopiesOnAnUnwritableTargetDeletesNothingAndChangesNothing() = runTest {
     h.sync().assertOk()
+    val sources = h.settings.value.sources
+    val cursors = h.store.cursors.all()
+    val mappings = h.store.mappings.all()
+    val snapshots = h.store.snapshots.forCalendar(CAL_A)
     h.gateway.calendars[TARGET] = h.gateway.calendars.getValue(TARGET).copy(accessLevel = 200)
     val removal = h.engine.removeAllCopies(h.target)
     assertEquals(SyncProblem.TARGET_UNAVAILABLE, removal.failure?.problem)
     assertEquals(0, removal.deleted)
     assertEquals(4, h.copies().size)
-    assertTrue(h.settings.value.sources.isEmpty()) // syncing stopped first anyway
+    // Phase 5 review, SHOULD-FIX-1: syncing stops only after the deletes went through.
+    assertEquals(sources, h.settings.value.sources)
+    assertEquals(cursors, h.store.cursors.all())
+    assertEquals(mappings, h.store.mappings.all())
+    assertEquals(snapshots, h.store.snapshots.forCalendar(CAL_A))
 
     h.gateway.calendars.remove(TARGET)
     assertTrue(h.engine.removeAllCopies(h.target).succeeded) // gone with its rows
+    assertTrue(h.settings.value.sources.isEmpty())
+    assertTrue(h.store.cursors.all().isEmpty())
+  }
+
+  @Test
+  fun removeAllCopiesWithoutCalendarPermissionIsAFailureThatKeepsEverything() = runTest {
+    h.sync().assertOk()
+    val cursors = h.store.cursors.all()
+    h.gateway.permission = false
+    val removal = h.engine.removeAllCopies(h.target)
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, removal.failure?.problem)
+    assertEquals(listOf(SourceCalendar(CAL_A, "Family")), h.settings.value.sources)
+    assertEquals(cursors, h.store.cursors.all())
+    assertEquals(4, h.store.mappings.count())
+
+    h.gateway.permission = true
+    assertEquals(6, h.engine.removeAllCopies(h.target).deleted) // 4 copies + 2 unmanaged marked rows
   }
 
   @Test

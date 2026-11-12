@@ -23,8 +23,8 @@ data class Snapshot(
 }
 
 /**
- * `mapping(uuid PK, tt_cal_id, target_cal_id, event_id, spec_hash, end_at)`: one copy the app
- * manages. [eventId] is the provider's `Events._ID` in the target calendar [targetCalId].
+ * `mapping(uuid PK, tt_cal_id, target_cal_id, event_id, spec_hash, end_at, written_at)`: one copy
+ * the app manages. [eventId] is the provider's `Events._ID` in the target calendar [targetCalId].
  *
  * [endAt] is the last written end of the copy (for a series the end of its last instance, or
  * `Long.MAX_VALUE` if open-ended or unknown). Every window check uses it: a mapping with
@@ -38,9 +38,16 @@ data class Mapping(
   /** `SpecHash` of the last written spec, or [ADOPTED_HASH] for an adopted row. */
   val specHash: String,
   val endAt: Long,
+  /**
+   * When the app last wrote the row (insert, update, adoption), device clock; null if unknown
+   * (mappings from schema 1). A row still `dirty` long after it is the upload signal of
+   * `SyncReport.notUploaded`.
+   */
+  val writtenAt: Long? = null,
 ) {
   override fun toString(): String =
-    "Mapping(uuid=${uuid.take(8)}, ttCalId=$ttCalId, targetCalId=$targetCalId, eventId=$eventId, endAt=$endAt)"
+    "Mapping(uuid=${uuid.take(8)}, ttCalId=$ttCalId, targetCalId=$targetCalId, eventId=$eventId, " +
+      "endAt=$endAt, writtenAt=$writtenAt)"
 
   companion object {
     /** Hash of an adopted row: never equal to a real hash, so the next diff updates the row once. */
@@ -48,16 +55,32 @@ data class Mapping(
   }
 }
 
-/** `cursor(tt_cal_id PK, since, last_full_at, state, labels_json)`: per TimeTree calendar. */
+/**
+ * `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages)`: per
+ * TimeTree calendar.
+ */
 data class SyncCursor(
   val ttCalId: Long,
-  /** The `since` to continue from, or null before the first complete fetch (forces FULL). */
-  val since: Long?,
+  /**
+   * The high-water mark: the newest change (`TtEvent.changedAt`, the later of `updated_at` and
+   * `deactivated_at`, TimeTree's clock) among the events of every complete fetch so far, or 0 if
+   * the last FULL found none. An INCREMENTAL run reads the feed from the top until it reaches
+   * events older than this minus `TimeTreeApi.FEED_OVERLAP`. Null before the first FULL, or after
+   * the upgrade from schema 1, whose `since` was the server's backwards paging cursor: forces FULL.
+   * The server's `since` is never stored.
+   */
+  val highWater: Long?,
   /** When the last FULL finished, or null if never (forces FULL). */
   val lastFullAt: Long?,
   val state: CalendarState,
   /** Cached `List<TtLabel>` as JSON (`TtJson`), or null if not fetched yet. */
   val labelsJson: String?,
+  /**
+   * Pages of the whole feed at the last FULL (`EventsResult.feedPages`), or null if unknown. A
+   * small feed gets a FULL on every run, a larger one INCREMENTAL runs between FULLs (DESIGN.md
+   * section 5).
+   */
+  val lastFullPages: Int? = null,
 )
 
 /** Stored by [name]; never rename the constants. */

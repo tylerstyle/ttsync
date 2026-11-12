@@ -62,6 +62,18 @@ class ChecklistTest {
   fun googleSyncNeedsBothSwitches() {
     val master = Checklist.build(ok, GoogleSyncState(masterSync = false, calendarSync = true))
     assertTrue(CheckItem(CheckId.GOOGLE_SYNC, CheckState.PROBLEM) in master)
+    val account = Checklist.build(ok, GoogleSyncState(masterSync = true, calendarSync = false))
+    assertTrue(CheckItem(CheckId.GOOGLE_SYNC, CheckState.PROBLEM) in account)
+  }
+
+  @Test
+  fun aHiddenAccountSwitchIsJudgedByTheUploads() {
+    // Device test B2: Android 13+ does not show the app the account's calendar sync switch.
+    val hidden = GoogleSyncState(masterSync = true, calendarSync = null)
+    assertTrue(CheckItem(CheckId.GOOGLE_SYNC, CheckState.OK) in Checklist.build(ok, hidden))
+    assertTrue(
+      CheckItem(CheckId.GOOGLE_SYNC, CheckState.PROBLEM) in Checklist.build(ok, hidden, notUploaded = 2)
+    )
   }
 
   @Test

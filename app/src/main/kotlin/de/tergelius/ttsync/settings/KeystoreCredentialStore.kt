@@ -32,15 +32,26 @@ import kotlinx.serialization.json.Json
  *   `{email, password, sessionId}`, written with [AtomicFile], so a crash never leaves half a file.
  * - If the file does not decrypt or decode (a lost key, a corrupt file), the file and the key are
  *   wiped and [load] returns null: the app asks for sign-in again.
+ * - [clear] (sign-out) deletes the file and the key alias.
  *
  * The decrypted value is cached in memory after the first [load], so the client's per-request
  * session lookups do not hit the Keystore. All file and Keystore work runs on `Dispatchers.IO`;
  * a mutex keeps read-modify-write ([updateSessionId]) atomic. Nothing here is ever logged except
  * exception class names.
  */
-class KeystoreCredentialStore(context: Context, private val log: TtLog = TtLog.None) :
-  CredentialStore {
-  private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, FILE_NAME))
+class KeystoreCredentialStore internal constructor(
+  /** The folder of [FILE_NAME]; read lazily, on `Dispatchers.IO` (phase 5 review, NIT-2). */
+  private val directory: () -> File,
+  private val keys: CredentialKeys,
+  private val log: TtLog,
+) : CredentialStore {
+  constructor(
+    context: Context,
+    log: TtLog = TtLog.None,
+  ) : this({ context.applicationContext.noBackupFilesDir }, AndroidKeystoreKeys(log), log)
+
+  /** Created on first use, inside an IO block: `noBackupFilesDir` may create the folder. */
+  private val file by lazy { AtomicFile(File(directory(), FILE_NAME)) }
   private val mutex = Mutex()
 
   /** What the file holds, once read; null until then. */
@@ -116,7 +127,7 @@ class KeystoreCredentialStore(context: Context, private val log: TtLog = TtLog.N
     val blob =
       try {
         try {
-          encrypt(plain, existingKey() ?: newKey())
+          encrypt(plain, keys.existing() ?: keys.create())
         } catch (e: GeneralSecurityException) {
           retryWithNewKey(plain, e)
         } catch (e: ProviderException) {
@@ -138,13 +149,14 @@ class KeystoreCredentialStore(context: Context, private val log: TtLog = TtLog.N
   /** A broken key: replace it once. The old file is unreadable with the new key, which is fine. */
   private fun retryWithNewKey(plain: ByteArray, cause: Exception): ByteArray {
     log.w("credential key unusable (${cause.javaClass.simpleName}); creating a new one")
-    deleteKey()
-    return encrypt(plain, newKey())
+    keys.delete()
+    return encrypt(plain, keys.create())
   }
 
+  /** The file and the key alias (sign-out, or an unreadable file). */
   private fun wipe() {
     file.delete()
-    deleteKey()
+    keys.delete()
   }
 
   private fun encrypt(plain: ByteArray, key: SecretKey): ByteArray {
@@ -157,39 +169,10 @@ class KeystoreCredentialStore(context: Context, private val log: TtLog = TtLog.N
 
   private fun decrypt(blob: ByteArray): ByteArray {
     if (blob.size <= IV_BYTES + TAG_BITS / 8) throw GeneralSecurityException("file too short")
-    val key = existingKey() ?: throw GeneralSecurityException("no key")
+    val key = keys.existing() ?: throw GeneralSecurityException("no key")
     val cipher = Cipher.getInstance(TRANSFORMATION)
     cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, blob, 0, IV_BYTES))
     return cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES)
-  }
-
-  private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-
-  private fun existingKey(): SecretKey? = keyStore().getKey(KEY_ALIAS, null) as? SecretKey
-
-  private fun newKey(): SecretKey {
-    val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-    generator.init(
-      KeyGenParameterSpec.Builder(
-          KEY_ALIAS,
-          KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-        )
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setKeySize(256)
-        // Background runs decrypt without the user, so no user authentication.
-        .setUserAuthenticationRequired(false)
-        .build()
-    )
-    return generator.generateKey()
-  }
-
-  private fun deleteKey() {
-    try {
-      keyStore().deleteEntry(KEY_ALIAS)
-    } catch (e: Exception) {
-      log.w("credential key not deleted (${e.javaClass.simpleName})")
-    }
   }
 
   /** The encrypted payload. Never logged. */
@@ -214,10 +197,61 @@ class KeystoreCredentialStore(context: Context, private val log: TtLog = TtLog.N
     const val FILE_NAME = "credentials.enc"
     const val KEY_ALIAS = "ttsync_credentials"
 
-    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val IV_BYTES = 12
     private const val TAG_BITS = 128
     private val JSON = Json { ignoreUnknownKeys = true }
+  }
+}
+
+/** The credential key: [AndroidKeystoreKeys] on the phone, a software key in JVM tests. */
+internal interface CredentialKeys {
+  /** The key, or null if there is none. */
+  fun existing(): SecretKey?
+
+  /** Generates a new key under the alias, replacing any old one. */
+  fun create(): SecretKey
+
+  /** Deletes the alias; never throws. */
+  fun delete()
+}
+
+/**
+ * The non-exportable AndroidKeyStore AES-256-GCM key [KeystoreCredentialStore.KEY_ALIAS], without
+ * user authentication (background runs decrypt while the phone is locked).
+ */
+internal class AndroidKeystoreKeys(private val log: TtLog) : CredentialKeys {
+  private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+
+  override fun existing(): SecretKey? =
+    keyStore().getKey(KeystoreCredentialStore.KEY_ALIAS, null) as? SecretKey
+
+  override fun create(): SecretKey {
+    val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+    generator.init(
+      KeyGenParameterSpec.Builder(
+          KeystoreCredentialStore.KEY_ALIAS,
+          KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        )
+        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+        .setKeySize(256)
+        // Background runs decrypt without the user, so no user authentication.
+        .setUserAuthenticationRequired(false)
+        .build()
+    )
+    return generator.generateKey()
+  }
+
+  override fun delete() {
+    try {
+      keyStore().deleteEntry(KeystoreCredentialStore.KEY_ALIAS)
+    } catch (e: Exception) {
+      log.w("credential key not deleted (${e.javaClass.simpleName})")
+    }
+  }
+
+  private companion object {
+    const val ANDROID_KEYSTORE = "AndroidKeyStore"
   }
 }

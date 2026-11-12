@@ -152,6 +152,27 @@ class SetupViewModelsTest {
     assertEquals(SourcesError.SIGN_IN, vm.state.value.loadError)
   }
 
+  @Test
+  fun sourcesReloadWhenShownAgainAfterSigningIn() {
+    // Phase 5 review, SHOULD-FIX-3: back from "Sign in again", the same ViewModel must not keep
+    // showing the old sign-in error.
+    val g = UiTestGraph(credentials = SIGNED_IN)
+    g.client.calendarsResult = { throw TtError.LoginRequired() }
+    val vm = SourcesViewModel(g.settings, g.actions)
+    var requests = 0
+    g.client.calendarsResult = {
+      requests++
+      listOf(TtCalendar(1, "Family"))
+    }
+    vm.onResume()
+    assertNull(vm.state.value.loadError)
+    assertEquals(listOf(1L), vm.state.value.options.map { it.id })
+    assertEquals(1, requests)
+
+    vm.onResume() // nothing to retry: no extra request
+    assertEquals(1, requests)
+  }
+
   // Target
 
   @Test

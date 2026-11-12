@@ -93,7 +93,7 @@ class DataStoreSettingsRepository(context: Context) : SettingsRepository {
   }
 
   override suspend fun installUuid(): String {
-    store.data.first()[INSTALL_UUID]?.takeIf(::isInstallUuid)?.let {
+    store.safeData().first()[INSTALL_UUID]?.takeIf(::isInstallUuid)?.let {
       return it
     }
     var uuid = ""

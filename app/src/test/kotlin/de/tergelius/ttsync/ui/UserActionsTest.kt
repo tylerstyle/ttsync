@@ -4,9 +4,12 @@ import de.tergelius.ttsync.settings.Settings
 import de.tergelius.ttsync.settings.SetupStep
 import de.tergelius.ttsync.settings.SourceCalendar
 import de.tergelius.ttsync.settings.SyncInterval
+import de.tergelius.ttsync.settings.SyncStatus
 import de.tergelius.ttsync.sync.RemovalReport
 import de.tergelius.ttsync.sync.SyncFailure
 import de.tergelius.ttsync.sync.SyncProblem
+import de.tergelius.ttsync.sync.SyncReport
+import de.tergelius.ttsync.sync.SyncTrigger
 import de.tergelius.ttsync.timetree.TtError
 import de.tergelius.ttsync.ui.UiTestGraph.Companion.NOW
 import de.tergelius.ttsync.ui.UiTestGraph.Companion.SIGNED_IN
@@ -49,6 +52,22 @@ class UserActionsTest {
   fun signingInAgainAfterSetupStartsASync() = runTest {
     val g = UiTestGraph(settings = configured)
     assertEquals(SetupStep.DONE, g.actions.signIn("me@example.org", "secret"))
+    assertEquals("scheduler.runNow(full=false, MANUAL)", g.calls.log.last())
+  }
+
+  @Test
+  fun syncNowRightAfterASuccessfulRunQueuesNothing() = runTest {
+    // Device test F4: a delayed run can wait half an hour while the app is in the background.
+    val last = SyncReport("r", SyncTrigger.MANUAL, startedAt = NOW - 20_000, finishedAt = NOW - 10_000)
+    val g = UiTestGraph(settings = configured, status = SyncStatus(lastReport = last), credentials = SIGNED_IN)
+    assertEquals(SyncNowResult.RecentlySynced(10_000), g.actions.syncNow())
+    assertTrue(g.calls.log.none { it.startsWith("scheduler.runNow") })
+
+    g.actions.fullResync() // FULL always runs
+    assertEquals("scheduler.runNow(full=true, MANUAL)", g.calls.log.last())
+
+    g.status.flow.value = SyncStatus(lastReport = last.copy(finishedAt = NOW - 61_000))
+    assertEquals(SyncNowResult.Started, g.actions.syncNow())
     assertEquals("scheduler.runNow(full=false, MANUAL)", g.calls.log.last())
   }
 
@@ -251,24 +270,49 @@ class UserActionsTest {
   }
 
   @Test
-  fun aFailedRemoveAllCopiesRestoresTheSelectionAndTheSync() = runTest {
+  fun aFailedRemoveAllCopiesKeepsTheSelectionAndRestoresTheSync() = runTest {
     val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
     g.gateway.calendars = listOf(calendar(15, "TimeTree"))
     g.engine.removalFailure = noPermission
     val report = g.actions.removeAllCopies()
     assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, report.failure?.problem)
-    // The engine emptied the selection before deleting; it is back.
     assertEquals(configured.sources, g.settings.flow.value.sources)
     assertEquals(SetupStep.DONE, g.actions.currentStep())
     assertEquals(
       listOf(
         "scheduler.cancelAll",
         "engine.removeAllCopies(15)",
-        "settings.setSources([1, 2])",
         "scheduler.updatePeriodic(HOURS_3)",
       ),
       g.calls.log,
     )
+  }
+
+  @Test
+  fun aRevokedPermissionComesBackAsARemovalFailureNotAnException() = runTest {
+    // Phase 5 review, SHOULD-FIX-1: the target check is the engine's, so a SecurityException from
+    // the provider cannot escape past it.
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendarError = SecurityException("READ_CALENDAR revoked")
+    g.engine.removalFailure = noPermission
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, g.actions.removeAllCopies().failure?.problem)
+    val signOut = g.actions.signOut(removeCopies = true)
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, signOut?.failure?.problem)
+    assertEquals(SIGNED_IN, g.credentials.stored)
+    assertEquals(configured, g.settings.flow.value)
+  }
+
+  @Test
+  fun removingAllCopiesFromADeletedTargetLetsTheEngineDecide() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = emptyList() // 15 was deleted on the web, together with its rows
+    val report = g.actions.removeAllCopies()
+    assertTrue(report.succeeded)
+    assertEquals(
+      listOf("scheduler.cancelAll", "engine.removeAllCopies(15)", "engine.deselect([1, 2])"),
+      g.calls.log.take(3),
+    )
+    assertTrue(g.settings.flow.value.sources.isEmpty())
   }
 
   @Test

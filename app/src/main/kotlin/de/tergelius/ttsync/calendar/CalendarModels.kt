@@ -77,17 +77,23 @@ enum class TargetCheck {
 }
 
 /**
- * Android's sync switches for the target account. If either is off the run still writes, but the
- * copies stay on the phone until sync is back on (Status warning, checklist item).
+ * Android's sync switches for the target account. If one is known to be off the run still writes,
+ * but the copies stay on the phone until sync is back on (Status warning, checklist item).
  */
 data class GoogleSyncState(
-  /** `ContentResolver.getMasterSyncAutomatically()`. */
+  /** `ContentResolver.getMasterSyncAutomatically()`; needs no account access, so always known. */
   val masterSync: Boolean,
-  /** `ContentResolver.getSyncAutomatically(account, "com.android.calendar")`. */
-  val calendarSync: Boolean,
+  /**
+   * `ContentResolver.getSyncAutomatically(account, "com.android.calendar")`, or null if unknown.
+   * Since Android 13 (targetSdk > 32) that call answers false, and `requestSync` does nothing, for
+   * an account the app cannot see, and a Google account usually is not visible to the app (device
+   * test B2). The app then judges uploads from its own rows instead (`SyncReport.notUploaded`).
+   */
+  val calendarSync: Boolean?,
 ) {
+  /** Not known to be off: true unless master sync or the (visible) account's calendar sync is off. */
   val uploads: Boolean
-    get() = masterSync && calendarSync
+    get() = masterSync && calendarSync != false
 }
 
 /** Thrown by [CalendarGateway.apply] when the target no longer passes [TargetCalendar.check] (R3). */

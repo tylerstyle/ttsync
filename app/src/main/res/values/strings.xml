@@ -144,6 +144,11 @@
     <string name="check_google_sync_master_off">Auto-sync is off for all accounts. The copies stay on this phone until it\'s on again.</string>
     <string name="check_google_sync_account_off">Calendar sync is off for this Google account. The copies stay on this phone until it\'s on again.</string>
     <string name="check_google_sync_unknown">Checked once a target calendar is chosen and calendar access is allowed.</string>
+    <string name="check_google_sync_unverifiable">Auto-sync is on. Android doesn\'t show apps the calendar sync switch of a Google account, so the app checks that its copies reach Google.</string>
+    <plurals name="check_google_sync_not_uploaded">
+        <item quantity="one">%d copy hasn\'t reached Google 30 minutes after it was written. Check that calendar sync is on for this Google account.</item>
+        <item quantity="other">%d copies haven\'t reached Google 30 minutes after they were written. Check that calendar sync is on for this Google account.</item>
+    </plurals>
     <string name="check_battery_title">Unrestricted battery use</string>
     <string name="check_battery_ok">Allowed. Android lets the app sync in the background.</string>
     <string name="check_battery_problem">Restricted. Android may delay or skip background syncs. Allow unrestricted battery use for this app.</string>
@@ -210,6 +215,13 @@
     <string name="status_warnings_title">Warnings</string>
     <string name="status_warning_google_sync">Google sync is off, copies stay on this phone</string>
     <string name="status_warning_google_sync_text">Turn on auto-sync and calendar sync for the Google account to upload the copies.</string>
+    <plurals name="status_warning_not_uploaded">
+        <item quantity="one">%d change not uploaded to Google yet</item>
+        <item quantity="other">%d changes not uploaded to Google yet</item>
+    </plurals>
+    <string name="status_warning_not_uploaded_text">Copies written more than 30 minutes ago are still waiting for Google\'s sync. Check that auto-sync and calendar sync are on for the Google account.</string>
+    <!-- %1$d: seconds since the last successful sync -->
+    <string name="status_synced_recently">Synced %1$d s ago, nothing to do</string>
     <string name="status_warning_battery">Battery use is restricted</string>
     <string name="status_warning_notifications">Notifications are off</string>
     <string name="status_warning_paused_title">No access to some TimeTree calendars</string>

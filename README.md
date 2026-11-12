@@ -12,8 +12,9 @@ change or block at any time. [Deutsche Kurzfassung unten.](#deutsch)
 - Copies their events into one Google calendar on the phone. Google Calendar's own sync uploads them
   to your Google account, like events you create yourself.
 - Handles timed, all-day, multi-day and repeating events, edited or deleted occurrences, and deletions.
-- Syncs every hour, or every 3 or 6 hours if you prefer, and checks everything once a day.
-  "Sync now" works at any time.
+- Syncs every hour, or every 3 or 6 hours if you prefer. A small calendar is checked completely on
+  every run, a larger one at least every 6 hours, so deletions arrive within that time. "Sync now"
+  works at any time.
 - Copies only events that ended no more than 30 days ago. Older copies are left as they are.
 - Shows a status screen, a notification when syncing stops working, and a reliability checklist.
 - English and German.

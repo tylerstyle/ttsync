@@ -116,7 +116,7 @@ fun ReliabilityContent(state: ReliabilityUiState, onBack: () -> Unit, actions: C
     SectionCard {
       state.items.forEachIndexed { index, item ->
         if (index > 0) RowDivider()
-        ChecklistRow(item, device, state.googleSync, actions)
+        ChecklistRow(item, device, state.googleSync, state.notUploaded, actions)
       }
     }
     Hint(stringResource(R.string.reliability_footer))
@@ -128,6 +128,7 @@ private fun ChecklistRow(
   item: CheckItem,
   device: DeviceState,
   googleSync: GoogleSyncState?,
+  notUploaded: Int,
   actions: ChecklistActions,
 ) {
   val tone =
@@ -164,14 +165,17 @@ private fun ChecklistRow(
         tone = tone,
         title = stringResource(R.string.check_google_sync_title),
         detail =
-          stringResource(
-            when {
-              googleSync == null -> R.string.check_google_sync_unknown
-              !googleSync.masterSync -> R.string.check_google_sync_master_off
-              !googleSync.calendarSync -> R.string.check_google_sync_account_off
-              else -> R.string.check_google_sync_ok
-            }
-          ),
+          when {
+            googleSync == null -> stringResource(R.string.check_google_sync_unknown)
+            !googleSync.masterSync -> stringResource(R.string.check_google_sync_master_off)
+            googleSync.calendarSync == false ->
+              stringResource(R.string.check_google_sync_account_off)
+            notUploaded > 0 ->
+              pluralStringResource(R.plurals.check_google_sync_not_uploaded, notUploaded, notUploaded)
+            // Android 13+ hides the account's switch from the app (device test B2).
+            googleSync.calendarSync == null -> stringResource(R.string.check_google_sync_unverifiable)
+            else -> stringResource(R.string.check_google_sync_ok)
+          },
         action =
           fixButton(
             item.state != CheckState.OK,
@@ -258,7 +262,7 @@ private fun ReliabilityPreview() {
       standbyBucket = StandbyBucket.ACTIVE,
       manufacturer = "Xiaomi",
     )
-  val googleSync = GoogleSyncState(masterSync = true, calendarSync = false)
+  val googleSync = GoogleSyncState(masterSync = true, calendarSync = null)
   TTCalendarSyncTheme {
     ReliabilityContent(
       state = ReliabilityUiState(device, googleSync, Checklist.build(device, googleSync)),

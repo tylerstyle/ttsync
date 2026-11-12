@@ -177,9 +177,10 @@ class FakeEngine(private val calls: Calls, private val settings: FakeSettings? =
 
   override suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean): RemovalReport {
     calls.add("engine.removeAllCopies(${target.calendarId})")
-    if (stopSyncing) settings?.flow?.update { it.copy(sources = emptyList()) }
     removeAllError?.let { throw it }
     removalFailure?.let { return RemovalReport(deleted = 0, rejected = 0, failure = it) }
+    // Like the engine: syncing stops only once the deletes went through.
+    if (stopSyncing) settings?.flow?.update { it.copy(sources = emptyList()) }
     return removal
   }
 
@@ -204,8 +205,12 @@ class FakeGateway(
 
   override suspend fun calendars(): List<CalendarInfo> = calendars
 
-  override suspend fun calendar(calendarId: Long): CalendarInfo? = calendars.firstOrNull {
-    it.id == calendarId
+  /** Thrown by [calendar], e.g. a `SecurityException` for a revoked calendar permission. */
+  var calendarError: Exception? = null
+
+  override suspend fun calendar(calendarId: Long): CalendarInfo? {
+    calendarError?.let { throw it }
+    return calendars.firstOrNull { it.id == calendarId }
   }
 
   override fun googleSyncState(target: TargetCalendar): GoogleSyncState = googleSync
@@ -213,6 +218,9 @@ class FakeGateway(
   override suspend fun countForeignEvents(calendarId: Long): Int = foreign[calendarId] ?: 0
 
   override suspend fun findMarkedRows(target: TargetCalendar): List<MarkedRow> = error("not used")
+
+  override suspend fun pendingUploads(target: TargetCalendar, eventIds: Collection<Long>): Set<Long>? =
+    error("not used")
 
   override suspend fun checkRows(
     target: TargetCalendar,
@@ -240,7 +248,7 @@ class FakeClient(private val calls: Calls) : TimeTreeClient {
 
   override suspend fun labels(calendarId: Long): List<TtLabel> = error("not used")
 
-  override suspend fun events(calendarId: Long, since: Long?): EventsResult = error("not used")
+  override suspend fun events(calendarId: Long, stopAt: Long?): EventsResult = error("not used")
 }
 
 class FakeNotifier(private val calls: Calls) : SyncNotifier {

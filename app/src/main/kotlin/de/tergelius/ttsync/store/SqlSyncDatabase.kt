@@ -65,7 +65,7 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
   }
 
   private inner class Mappings : MappingStore {
-    private val columns = "uuid, tt_cal_id, target_cal_id, event_id, spec_hash, end_at"
+    private val columns = "uuid, tt_cal_id, target_cal_id, event_id, spec_hash, end_at, written_at"
 
     private fun read(row: SqlRow) =
       Mapping(
@@ -75,6 +75,7 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
         eventId = row.long(3),
         specHash = row.string(4),
         endAt = row.long(5),
+        writtenAt = row.longOrNull(6),
       )
 
     override fun get(uuid: String): Mapping? =
@@ -99,8 +100,8 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
       sql.transaction {
         for (m in mappings) {
           sql.execute(
-            "INSERT OR REPLACE INTO ${SyncSchema.MAPPING} ($columns) VALUES (?, ?, ?, ?, ?, ?)",
-            listOf(m.uuid, m.ttCalId, m.targetCalId, m.eventId, m.specHash, m.endAt),
+            "INSERT OR REPLACE INTO ${SyncSchema.MAPPING} ($columns) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            listOf(m.uuid, m.ttCalId, m.targetCalId, m.eventId, m.specHash, m.endAt, m.writtenAt),
           )
         }
       }
@@ -123,15 +124,16 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
   }
 
   private inner class Cursors : CursorStore {
-    private val columns = "tt_cal_id, since, last_full_at, state, labels_json"
+    private val columns = "tt_cal_id, high_water, last_full_at, state, labels_json, last_full_pages"
 
     private fun read(row: SqlRow) =
       SyncCursor(
         ttCalId = row.long(0),
-        since = row.longOrNull(1),
+        highWater = row.longOrNull(1),
         lastFullAt = row.longOrNull(2),
         state = stateOf(row.string(3)),
         labelsJson = row.stringOrNull(4),
+        lastFullPages = row.longOrNull(5)?.toInt(),
       )
 
     override fun get(ttCalId: Long): SyncCursor? =
@@ -147,8 +149,15 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
 
     override fun put(cursor: SyncCursor) {
       sql.execute(
-        "INSERT OR REPLACE INTO ${SyncSchema.CURSOR} ($columns) VALUES (?, ?, ?, ?, ?)",
-        listOf(cursor.ttCalId, cursor.since, cursor.lastFullAt, cursor.state.name, cursor.labelsJson),
+        "INSERT OR REPLACE INTO ${SyncSchema.CURSOR} ($columns) VALUES (?, ?, ?, ?, ?, ?)",
+        listOf(
+          cursor.ttCalId,
+          cursor.highWater,
+          cursor.lastFullAt,
+          cursor.state.name,
+          cursor.labelsJson,
+          cursor.lastFullPages?.toLong(),
+        ),
       )
     }
 

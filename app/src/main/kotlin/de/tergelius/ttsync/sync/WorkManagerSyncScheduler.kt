@@ -20,11 +20,13 @@ import de.tergelius.ttsync.settings.StatusRepository
 import de.tergelius.ttsync.settings.SyncInterval
 import de.tergelius.ttsync.store.CalendarState
 import de.tergelius.ttsync.timetree.RequestPacer
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * [SyncScheduler] on WorkManager (DESIGN.md section 9).
@@ -44,11 +47,16 @@ import kotlinx.coroutines.sync.withLock
  *   flex, `NetworkType.CONNECTED`, exponential back-off from [SyncScheduler.BACKOFF]. It is only
  *   enqueued while syncing is wanted (signed in, sources and a target chosen); "Keep running" does
  *   not have to be done.
- * - **Now** ([SyncScheduler.NOW_WORK]): expedited one-time work, falling back to a normal request
- *   when out of quota. A pending request is replaced, and a pending FULL stays FULL. If the previous
- *   run finished less than [RequestPacer.MANUAL_RUN_GAP] ago, the request is a normal one delayed
- *   by the rest of that gap (expedited work cannot be delayed). While a "now" run is going on, the
- *   new request is appended after it, so the running sync is never cancelled.
+ * - **Now** ([SyncScheduler.NOW_WORK]): always expedited one-time work, falling back to a normal
+ *   request when out of quota; never delayed, because a delayed job of an app in the background
+ *   can wait half an hour (device test F4). See [planNow] for what a request does:
+ *   - a pending request is replaced, and a pending FULL stays FULL;
+ *   - a non-FULL request within [RequestPacer.MANUAL_RUN_GAP] of a successful run is not enqueued
+ *     at all ([NowRequest.recentlySyncedAgoMillis]; the UI says "Synced N s ago");
+ *   - while a "now" run is going on, the first request is appended after it as its follow-up, so
+ *     the running sync is never cancelled, and later ones coalesce into that follow-up (FULL wins:
+ *     a follow-up that is not FULL is updated in place), so repeated taps never queue a chain of
+ *     runs (phase 5 review, SHOULD-FIX-2).
  */
 class WorkManagerSyncScheduler(
   context: Context,
@@ -115,13 +123,15 @@ class WorkManagerSyncScheduler(
       .distinctUntilChanged()
   }
 
-  /** How [runNowAndWait] enqueued the request. */
+  /** How [runNowAndWait] handled the request. */
   data class NowRequest(
     val full: Boolean,
-    val expedited: Boolean,
-    val delayMillis: Long,
     /** Appended after a "now" run that was going on. */
     val afterRunning: Boolean,
+    /** Merged into the follow-up that already waited behind the running sync. */
+    val coalesced: Boolean = false,
+    /** Not enqueued: the last run succeeded this long ago (less than the manual run gap). */
+    val recentlySyncedAgoMillis: Long? = null,
   )
 
   // ---------------------------------------------------------------------------------------------
@@ -174,47 +184,70 @@ class WorkManagerSyncScheduler(
   }
 
   private suspend fun enqueueNow(full: Boolean, trigger: SyncTrigger): NowRequest {
-    val existing = workManager.getWorkInfosForUniqueWorkFlow(SyncScheduler.NOW_WORK).first()
-    val running = existing.any { it.state == WorkInfo.State.RUNNING }
-    val pendingFull =
-      existing.any {
-        (it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED) &&
-          TAG_FULL in it.tags
+    val existing =
+      workManager.getWorkInfosForUniqueWorkFlow(SyncScheduler.NOW_WORK).first().map {
+        NowWork(it.id, it.state, full = TAG_FULL in it.tags)
       }
-    val merged = full || pendingFull
-    val gap = RequestPacer.MANUAL_RUN_GAP.inWholeMilliseconds
-    val delay =
-      if (running) {
-        gap
-      } else {
-        val lastFinished = status.current().lastReport?.finishedAt
-        if (lastFinished == null) 0L else (lastFinished + gap - nowMillis()).coerceIn(0L, gap)
+    val recentAgo = SyncScheduler.recentSuccessAgo(status.current().lastReport, nowMillis())
+    var plan = planNow(existing, full, recentAgo)
+    if (plan is NowPlan.UpgradeToFull) {
+      if (upgradeToFull(plan.ids, trigger)) {
+        log.i("scheduler: ${SyncScheduler.NOW_WORK} follow-up upgraded to FULL trigger=$trigger")
+        return NowRequest(full = true, afterRunning = true, coalesced = true)
       }
+      // The follow-up started or finished in the meantime: append a new one.
+      plan = NowPlan.Enqueue(full = true, afterRunning = true)
+    }
+    when (plan) {
+      is NowPlan.RecentlySynced -> {
+        log.i("scheduler: ${SyncScheduler.NOW_WORK} not enqueued, synced ${plan.agoMillis / 1000} s ago")
+        return NowRequest(full = false, afterRunning = false, recentlySyncedAgoMillis = plan.agoMillis)
+      }
+      is NowPlan.Coalesce -> {
+        log.i("scheduler: ${SyncScheduler.NOW_WORK} already queued behind the running sync (full=${plan.full})")
+        return NowRequest(plan.full, afterRunning = true, coalesced = true)
+      }
+      is NowPlan.Enqueue -> {
+        val policy =
+          if (plan.afterRunning) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE
+        workManager.enqueueUniqueWork(SyncScheduler.NOW_WORK, policy, nowWork(plan.full, trigger)).await()
+        log.i(
+          "scheduler: ${SyncScheduler.NOW_WORK} enqueued trigger=$trigger full=${plan.full} " +
+            "afterRunning=${plan.afterRunning}"
+        )
+        return NowRequest(plan.full, afterRunning = plan.afterRunning)
+      }
+      is NowPlan.UpgradeToFull -> error("handled above")
+    }
+  }
+
+  /**
+   * Turns the follow-ups waiting behind a running sync into FULL runs in place, keeping their place
+   * in the chain (`WorkManager.updateWork`). False if one could not be updated any more (it started
+   * or finished meanwhile).
+   */
+  private suspend fun upgradeToFull(ids: List<UUID>, trigger: SyncTrigger): Boolean =
+    ids.all { id ->
+      val update = workManager.updateWork(nowWork(full = true, trigger, id = id))
+      val result = withContext(Dispatchers.IO) { update.get() }
+      result == WorkManager.UpdateResult.APPLIED_IMMEDIATELY
+    }
+
+  /** A [SyncScheduler.NOW_WORK] request: expedited, never delayed (see the class comment). */
+  private fun nowWork(full: Boolean, trigger: SyncTrigger, id: UUID? = null): OneTimeWorkRequest {
     val builder =
       OneTimeWorkRequest.Builder(SyncWorker::class.java)
-        .setInputData(
-          workDataOf(SyncWorker.KEY_TRIGGER to trigger.name, SyncWorker.KEY_FULL to merged)
-        )
+        .setInputData(workDataOf(SyncWorker.KEY_TRIGGER to trigger.name, SyncWorker.KEY_FULL to full))
         .setBackoffCriteria(
           BackoffPolicy.EXPONENTIAL,
           SyncScheduler.BACKOFF.inWholeMinutes,
           TimeUnit.MINUTES,
         )
+        .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
         .addTag(TAG_SYNC)
-    if (merged) builder.addTag(TAG_FULL)
-    val expedited = delay == 0L
-    if (expedited) {
-      builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-    } else {
-      builder.setInitialDelay(delay, TimeUnit.MILLISECONDS)
-    }
-    val policy = if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE
-    workManager.enqueueUniqueWork(SyncScheduler.NOW_WORK, policy, builder.build()).await()
-    log.i(
-      "scheduler: ${SyncScheduler.NOW_WORK} enqueued trigger=$trigger full=$merged " +
-        "expedited=$expedited delay=${delay / 1000}s afterRunning=$running"
-    )
-    return NowRequest(full = merged, expedited = expedited, delayMillis = delay, afterRunning = running)
+    if (id != null) builder.setId(id)
+    if (full) builder.addTag(TAG_FULL)
+    return builder.build()
   }
 
   private fun ordered(what: String, block: suspend () -> Unit) {
@@ -232,7 +265,47 @@ class WorkManagerSyncScheduler(
   private fun <T> orderedAsync(block: suspend () -> T): Deferred<T> =
     scope.async(start = CoroutineStart.UNDISPATCHED) { queue.withLock { block() } }
 
+  /** One [SyncScheduler.NOW_WORK] item as [planNow] sees it. */
+  data class NowWork(val id: UUID, val state: WorkInfo.State, val full: Boolean)
+
+  /** What a [runNow] request does with the unique work as it stands. */
+  sealed interface NowPlan {
+    /** Enqueue a request: replacing a pending one, or appended after a running one. */
+    data class Enqueue(val full: Boolean, val afterRunning: Boolean) : NowPlan
+
+    /** Nothing to do: the last run succeeded [agoMillis] ago, within the manual run gap. */
+    data class RecentlySynced(val agoMillis: Long) : NowPlan
+
+    /** A follow-up already waits behind the running sync and covers this request. */
+    data class Coalesce(val full: Boolean) : NowPlan
+
+    /** The follow-ups waiting behind the running sync become FULL, in place. */
+    data class UpgradeToFull(val ids: List<UUID>) : NowPlan
+  }
+
   companion object {
+    /**
+     * The scheduling decision of [runNow], pure for tests. [recentSuccessAgo] is
+     * [SyncScheduler.recentSuccessAgo] of the last report.
+     * - While a sync runs, the first request is appended as its follow-up and every later one
+     *   coalesces into it; only a FULL request changes a follow-up that is not FULL yet.
+     * - Otherwise a non-FULL request right after a successful run needs no run (unless a FULL is
+     *   pending); anything else replaces a pending request, and a pending FULL stays FULL.
+     */
+    fun planNow(existing: List<NowWork>, full: Boolean, recentSuccessAgo: Long?): NowPlan {
+      val running = existing.any { it.state == WorkInfo.State.RUNNING }
+      val pending =
+        existing.filter { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+      val pendingFull = pending.any { it.full }
+      return when {
+        running && pending.isEmpty() -> NowPlan.Enqueue(full, afterRunning = true)
+        running && full && !pendingFull -> NowPlan.UpgradeToFull(pending.map { it.id })
+        running -> NowPlan.Coalesce(full || pendingFull)
+        !full && !pendingFull && recentSuccessAgo != null -> NowPlan.RecentlySynced(recentSuccessAgo)
+        else -> NowPlan.Enqueue(full || pendingFull, afterRunning = false)
+      }
+    }
+
     /** On every sync request, for `adb shell dumpsys jobscheduler` and WorkManager queries. */
     const val TAG_SYNC = "ttsync"
 

@@ -150,6 +150,55 @@ class StatusViewModelTest {
   }
 
   @Test
+  fun anAccountAndroidHidesFromTheAppIsNoGoogleSyncWarning() {
+    // Device test B2: Android 13+ answers "off" for an account the app cannot see.
+    val hidden =
+      LiveChecks(
+        device = okDevice,
+        targetCheck = TargetCheck.OK,
+        googleSync = GoogleSyncState(masterSync = true, calendarSync = null),
+      )
+    assertTrue(derive(live = hidden).warnings.isEmpty())
+    val masterOff = hidden.copy(googleSync = GoogleSyncState(masterSync = false, calendarSync = null))
+    assertEquals(listOf(StatusWarning.GOOGLE_SYNC_OFF), derive(live = masterOff).warnings)
+  }
+
+  @Test
+  fun copiesThatGoogleDoesNotTakeWarnWithTheirCount() {
+    val status =
+      SyncStatus(lastReport = report().copy(notUploaded = 3), lastSuccessAt = NOW - 60_000)
+    val state = derive(status = status)
+    assertEquals(listOf(StatusWarning.NOT_UPLOADED), state.warnings)
+    assertEquals(3, state.notUploaded)
+    // Known to be off: that warning says it all.
+    val off =
+      LiveChecks(okDevice, TargetCheck.OK, GoogleSyncState(masterSync = false, calendarSync = null))
+    assertEquals(listOf(StatusWarning.GOOGLE_SYNC_OFF), derive(status = status, live = off).warnings)
+  }
+
+  @Test
+  fun syncNowRightAfterASuccessfulRunSaysSoInsteadOfQueueing() = runTest {
+    // Device test F4: a delayed run can wait half an hour in the background, so none is queued.
+    val recent = SyncStatus(lastReport = report(), lastSuccessAt = NOW - 50_000) // 50 s ago
+    val g =
+      UiTestGraph(settings = settings, status = recent, credentials = SIGNED_IN, device = okDevice)
+    val vm =
+      StatusViewModel(g.settings, g.status, g.scheduler, g.gateway, g.deviceChecks, g.actions, flowOf(NOW))
+    backgroundScope.launch(main.dispatcher) { vm.state.collect {} }
+    vm.syncNow()
+    assertEquals(50L, vm.state.value.syncedSecondsAgo)
+    assertTrue(g.calls.log.none { it.startsWith("scheduler.runNow") })
+    vm.onSyncedShown()
+    assertNull(vm.state.value.syncedSecondsAgo)
+
+    // After a failed run, "Sync now" retries at once.
+    g.status.flow.value = recent.copy(lastReport = report(failure = SyncFailure(SyncProblem.NETWORK)))
+    vm.syncNow()
+    assertNull(vm.state.value.syncedSecondsAgo)
+    assertEquals("scheduler.runNow(full=false, MANUAL)", g.calls.log.last())
+  }
+
+  @Test
   fun skippedKeepRunningAndOffNotificationsWarn() {
     val device = okDevice.copy(batteryUnrestricted = false, notificationsEnabled = false)
     val state = derive(live = LiveChecks(device = device, targetCheck = TargetCheck.OK))

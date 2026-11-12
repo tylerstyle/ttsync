@@ -1,6 +1,7 @@
 package de.tergelius.ttsync.timetree
 
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import okhttp3.OkHttpClient
 
@@ -28,6 +29,13 @@ object TimeTreeApi {
 
   /** Paging stops with [TtError.ApiChanged] after this many pages of one events fetch. */
   const val MAX_PAGES = 500
+
+  /**
+   * How far below a known `updated_at` an events read goes before it stops ([EventFeed]): changes
+   * that commit with a slightly older timestamp, or share one, are read again rather than missed.
+   * Re-reading a few known events is harmless; the engine's hash diff writes nothing for them.
+   */
+  val FEED_OVERLAP = 2.minutes
 
   val CONNECT_TIMEOUT = 15.seconds
   val READ_TIMEOUT = 30.seconds

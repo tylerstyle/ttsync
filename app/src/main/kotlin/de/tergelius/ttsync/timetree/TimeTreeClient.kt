@@ -65,13 +65,19 @@ interface TimeTreeClient {
   suspend fun labels(calendarId: Long): List<TtLabel>
 
   /**
-   * `GET /calendar/{id}/events/sync[?since=N]`, following `since` while `chunk == true`. [since]
-   * null fetches everything (FULL).
+   * `GET /calendar/{id}/events/sync[?since=N]`: the calendar's change feed, which the API orders by
+   * `updated_at`, newest change first, and pages *backwards* (the returned `since` asks for the
+   * next older page; see [EventFeed]). Every read starts at the top of the feed.
+   * - [stopAt] null reads every page until `chunk == false` (FULL): the result is
+   *   [EventsResult.complete], and absence from it means deleted.
+   * - Otherwise (INCREMENTAL) the read stops after the first page that holds an event with
+   *   `updated_at <= stopAt`. The engine passes its high-water mark minus [TimeTreeApi.FEED_OVERLAP],
+   *   so a few known events come again. Absence from such a result means nothing.
    *
-   * Never returns a partial list: an error on any page throws and discards the earlier pages. The
-   * cursor may decrease; a cursor that repeats, or more than [TimeTreeApi.MAX_PAGES] pages, throws
-   * [TtError.ApiChanged], as does a structurally broken page (not JSON, no `events` array, no
-   * `chunk`/`since`). Events are deduplicated by uuid, the last occurrence wins.
+   * Never returns a partial list: an error on any page throws and discards the earlier pages. A
+   * cursor that repeats, or more than [TimeTreeApi.MAX_PAGES] pages, throws [TtError.ApiChanged], as
+   * does a structurally broken page (not JSON, no `events` array, no `chunk`/`since`). Events are
+   * deduplicated by uuid; the newest occurrence ([TtEvent.changedAt]) wins.
    *
    * A single event that does not decode (a live event without its times, say) does not fail the
    * fetch: it is left out and reported in [EventsResult.skippedUuids] and
@@ -79,19 +85,27 @@ interface TimeTreeClient {
    *
    * @throws TtError.AccessLost on 403/404 for this calendar
    */
-  suspend fun events(calendarId: Long, since: Long?): EventsResult
+  suspend fun events(calendarId: Long, stopAt: Long?): EventsResult
 }
 
 /** The complete result of one [TimeTreeClient.events] call. */
 data class EventsResult(
   /** Live events and tombstones, deduplicated by uuid. */
   val events: List<FetchedEvent>,
-  /** The final `since`; the cursor to store once this calendar's writes succeeded. */
-  val since: Long,
-  /** Number of pages fetched, for the report. */
+  /**
+   * The read reached the end of the feed (`chunk == false`). Always true for a FULL read; an
+   * INCREMENTAL one is usually not complete, and the engine never treats it as such.
+   */
+  val complete: Boolean,
+  /** Number of pages fetched, for the report (a FULL's second pass included). */
   val pages: Int,
   /**
-   * Uuids whose last occurrence in this fetch did not decode, so they are not in [events]. Their
+   * Pages of the first pass alone; for a FULL, the size of the whole feed. The engine keeps it to
+   * choose between FULL and INCREMENTAL runs ([de.tergelius.ttsync.store.SyncCursor.lastFullPages]).
+   */
+  val feedPages: Int = pages,
+  /**
+   * Uuids whose newest occurrence in this fetch did not decode, so they are not in [events]. Their
    * state is unknown: the engine must leave their mappings and copies alone, and a FULL fetch must
    * not treat them as missing (deleted).
    */
@@ -102,7 +116,15 @@ data class EventsResult(
    * delete copies of missing uuids for this calendar.
    */
   val skippedMalformed: Int = 0,
-)
+) {
+  /**
+   * The newest change among [events] (largest [TtEvent.changedAt]), or null if there are none. The
+   * engine keeps the largest one it has seen as the calendar's high-water mark; the server's
+   * `since` is never stored.
+   */
+  val highWater: Long?
+    get() = events.maxOfOrNull { it.event.changedAt }
+}
 
 /** A decoded event plus its raw JSON object, which is what `SnapshotStore` keeps. */
 data class FetchedEvent(val event: TtEvent, val json: JsonObject) {

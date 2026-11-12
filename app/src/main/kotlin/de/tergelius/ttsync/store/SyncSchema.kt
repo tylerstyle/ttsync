@@ -12,7 +12,7 @@ package de.tergelius.ttsync.store
  * update [CREATE] so a fresh install ends up with the same tables.
  */
 object SyncSchema {
-  const val VERSION = 1
+  const val VERSION = 2
 
   const val SNAPSHOT = "snapshot"
   const val MAPPING = "mapping"
@@ -41,17 +41,19 @@ object SyncSchema {
         target_cal_id INTEGER NOT NULL,
         event_id INTEGER NOT NULL,
         spec_hash TEXT NOT NULL,
-        end_at INTEGER NOT NULL
+        end_at INTEGER NOT NULL,
+        written_at INTEGER
       )
       """,
       "CREATE INDEX mapping_tt_cal_id ON $MAPPING (tt_cal_id)",
       """
       CREATE TABLE $CURSOR (
         tt_cal_id INTEGER NOT NULL PRIMARY KEY,
-        since INTEGER,
+        high_water INTEGER,
         last_full_at INTEGER,
         state TEXT NOT NULL,
-        labels_json TEXT
+        labels_json TEXT,
+        last_full_pages INTEGER
       )
       """,
       "CREATE TABLE $META (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
@@ -59,9 +61,37 @@ object SyncSchema {
 
   /**
    * Upgrade steps: the key is the version a step starts from, the value the statements that lift it
-   * to `key + 1`. Version 1 is the first schema, so there are none yet.
+   * to `key + 1`.
    */
-  val MIGRATIONS: Map<Int, List<String>> = emptyMap()
+  val MIGRATIONS: Map<Int, List<String>> =
+    mapOf(
+      // 1 → 2 (device test 2026-11-12):
+      // - `cursor.since` (the server's backwards paging cursor, which made INCREMENTAL runs miss
+      //   changes) becomes `cursor.high_water`. The old value means nothing as a high-water mark,
+      //   so it is dropped: null forces one FULL. State, last FULL and labels are kept. A table
+      //   rebuild, because `RENAME COLUMN` needs SQLite 3.25 (API 30) and minSdk is 26.
+      // - `cursor.last_full_pages` and `mapping.written_at` are new, null (unknown) for old rows.
+      1 to
+        listOf(
+          "ALTER TABLE $MAPPING ADD COLUMN written_at INTEGER",
+          """
+          CREATE TABLE ${CURSOR}_v2 (
+            tt_cal_id INTEGER NOT NULL PRIMARY KEY,
+            high_water INTEGER,
+            last_full_at INTEGER,
+            state TEXT NOT NULL,
+            labels_json TEXT,
+            last_full_pages INTEGER
+          )
+          """,
+          """
+          INSERT INTO ${CURSOR}_v2 (tt_cal_id, high_water, last_full_at, state, labels_json)
+          SELECT tt_cal_id, NULL, last_full_at, state, labels_json FROM $CURSOR
+          """,
+          "DROP TABLE $CURSOR",
+          "ALTER TABLE ${CURSOR}_v2 RENAME TO $CURSOR",
+        )
+    )
 
   fun create(sql: SqlConnection) {
     sql.transaction { CREATE.forEach { sql.execute(it.trimIndent()) } }

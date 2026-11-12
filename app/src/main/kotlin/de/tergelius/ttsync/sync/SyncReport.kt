@@ -19,6 +19,11 @@ data class SyncReport(
   val counts: SyncCounts = SyncCounts(),
   val calendars: List<CalendarReport> = emptyList(),
   val warnings: Set<SyncWarning> = emptySet(),
+  /**
+   * Copies written more than 30 min before this run that Google's sync still has not uploaded
+   * (`dirty = 1`); 0 if none or unknown (device test B2).
+   */
+  val notUploaded: Int = 0,
 ) {
   val succeeded: Boolean
     get() = failure == null
@@ -127,11 +132,18 @@ enum class SyncProblem(val userMustAct: Boolean, val retryable: Boolean) {
 /** Problems that do not stop the run. */
 @Serializable
 enum class SyncWarning {
-  /** Master sync or the account's calendar sync is off: copies stay on this phone for now. */
+  /** Master sync or the visible account's calendar sync is off: copies stay on this phone. */
   GOOGLE_SYNC_OFF,
 
   /** At least one TimeTree calendar is paused after losing access. */
   CALENDAR_PAUSED,
+
+  /**
+   * Google sync is not known to be off, but [SyncReport.notUploaded] copies are still waiting for
+   * upload long after they were written: calendar sync may be off for the account (which Android
+   * 13+ does not let the app see).
+   */
+  NOT_UPLOADED,
 }
 
 /** What started a run. */
