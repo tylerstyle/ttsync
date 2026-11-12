@@ -61,7 +61,12 @@ interface TimeTreeClient {
    *
    * Never returns a partial list: an error on any page throws and discards the earlier pages. The
    * cursor may decrease; a cursor that repeats, or more than [TimeTreeApi.MAX_PAGES] pages, throws
-   * [TtError.ApiChanged]. Events are deduplicated by uuid, the last occurrence wins.
+   * [TtError.ApiChanged], as does a structurally broken page (not JSON, no `events` array, no
+   * `chunk`/`since`). Events are deduplicated by uuid, the last occurrence wins.
+   *
+   * A single event that does not decode (a live event without its times, say) does not fail the
+   * fetch: it is left out and reported in [EventsResult.skippedUuids] and
+   * [EventsResult.skippedMalformed]. Tombstones without times decode (see [TtEvent]).
    *
    * @throws TtError.AccessLost on 403/404 for this calendar
    */
@@ -76,6 +81,18 @@ data class EventsResult(
   val since: Long,
   /** Number of pages fetched, for the report. */
   val pages: Int,
+  /**
+   * Uuids whose last occurrence in this fetch did not decode, so they are not in [events]. Their
+   * state is unknown: the engine must leave their mappings and copies alone, and a FULL fetch must
+   * not treat them as missing (deleted).
+   */
+  val skippedUuids: Set<String> = emptySet(),
+  /**
+   * Events left out because they did not decode, for the report. If this is larger than
+   * [skippedUuids].size, some had no readable uuid, so a FULL fetch is not complete enough to
+   * delete copies of missing uuids for this calendar.
+   */
+  val skippedMalformed: Int = 0,
 )
 
 /** A decoded event plus its raw JSON object, which is what `SnapshotStore` keeps. */
