@@ -1,0 +1,29 @@
+{
+  "calendar_labels": [
+    {
+      "id": 1,
+      "calendar_id": 1000000001,
+      "name": "Family",
+      "color": 3067015
+    },
+    {
+      "id": 2,
+      "calendar_id": 1000000001,
+      "name": "Work",
+      "color": 4047560
+    },
+    {
+      "id": 3,
+      "calendar_id": 1000000001,
+      "name": "",
+      "color": 4698871
+    },
+    {
+      "id": 4,
+      "calendar_id": 1000000001,
+      "name": " Work\nstuff ",
+      "color": 9732216
+    }
+  ],
+  "since": 1794400000000
+}
