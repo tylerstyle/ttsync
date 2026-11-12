@@ -56,9 +56,20 @@ set, Gradle warns, names the missing ones and also builds unsigned.
 | `ttsync.signing.keyAlias` | `TTSYNC_KEY_ALIAS` | `ttsync` |
 | `ttsync.signing.keyPassword` | `TTSYNC_KEY_PASSWORD` | the same password (PKCS12) |
 
-Put them in `~/.gradle/gradle.properties` (not the repo's `gradle.properties`) and run
-`chmod 600 ~/.gradle/gradle.properties`. Don't type the passwords into commands, where shell history
-would keep them.
+Put them in `~/.gradle/gradle.properties` (not the repo's `gradle.properties`) as plain
+`key=value` lines, not as the table above. Open the file in an editor and replace `<password>`:
+
+```properties
+ttsync.signing.storeFile=~/keys/ttsync/release.jks
+ttsync.signing.storePassword=<password>
+ttsync.signing.keyAlias=ttsync
+ttsync.signing.keyPassword=<password>
+```
+
+Then run `chmod 600 ~/.gradle/gradle.properties`. Don't type the passwords into commands, where
+shell history would keep them. To check the setup without showing the password, build and look
+for the certificate (section 3, step 3): `apksigner verify --print-certs` must print
+`Signer #1 certificate DN: CN=…`; an `app-release-unsigned.apk` means the values weren't read.
 
 ## 3. Release steps
 
