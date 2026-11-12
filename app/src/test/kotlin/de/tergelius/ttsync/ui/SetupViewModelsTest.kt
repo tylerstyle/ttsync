@@ -176,11 +176,12 @@ class SetupViewModelsTest {
     assertFalse(vm.state.value.loading)
     vm.toggle(2)
     vm.save()
-    assertEquals(listOf(SourceCalendar(2, "Football")), vm.state.value.confirmRemoval)
+    assertEquals(listOf(SourceCalendar(2, "Football")), vm.state.value.confirm?.removed)
+    assertEquals(0, vm.state.value.confirm?.filteredCopies)
     assertTrue(g.calls.log.isEmpty())
 
     vm.confirmRemoval()
-    assertNull(vm.state.value.confirmRemoval)
+    assertNull(vm.state.value.confirm)
     assertEquals(SetupStep.DONE, vm.state.value.next)
     assertEquals(
       listOf("engine.deselect([2])", "notifier.clearAccessLost(2)", "settings.setSources([1])"),

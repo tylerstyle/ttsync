@@ -79,8 +79,87 @@
     <string name="sources_unavailable">No access any more. Its copies are kept until you deselect it.</string>
     <string name="sources_error_sign_in">TimeTree no longer accepts the stored sign-in.</string>
     <string name="sources_remove_title">Remove copies?</string>
-    <!-- %1$s: comma-separated calendar names -->
-    <string name="sources_remove_text">The copies of these calendars will be deleted from your Google calendar: %1$s. Your own events stay untouched.</string>
+    <!-- %1$s: comma-separated calendar names, %2$s: target calendar name -->
+    <string name="sources_remove_calendars">The copies of these calendars will be deleted from %2$s: %1$s.</string>
+    <!-- %1$d: number of copies, %2$s: target calendar name -->
+    <plurals name="sources_remove_filtered">
+        <item quantity="one">%1$d copy no longer matches and will be removed from %2$s.</item>
+        <item quantity="other">%1$d copies no longer match and will be removed from %2$s.</item>
+    </plurals>
+    <string name="sources_remove_untouched">Your own events stay untouched.</string>
+    <!-- %1$s: the filter summary, e.g. "All" or "2 labels · 1 person" -->
+    <string name="sources_filter_line">Events: %1$s</string>
+    <!-- Accessibility: what tapping the filter line does -->
+    <string name="sources_filter_open">Choose events</string>
+    <!-- %1$s: calendar name, in lists of calendars whose filter restricts the events -->
+    <string name="sources_filtered_name">%1$s (filtered)</string>
+
+    <!-- Filter editor (which events of a calendar are copied) -->
+    <string name="filter_title">Choose events</string>
+    <!-- %1$s: TimeTree calendar name -->
+    <string name="filter_intro">Which events of %1$s are copied. An empty section doesn\'t restrict anything. If you fill in several sections, an event must match all of them. An event with a word from \"Skip if it contains\" is never copied.</string>
+    <string name="filter_labels_title">Labels</string>
+    <string name="filter_labels_hint">Only events with one of the ticked labels.</string>
+    <string name="filter_labels_empty">TimeTree lists no labels for this calendar.</string>
+    <!-- %1$d: TimeTree label id, for a label with neither a name nor a known colour -->
+    <string name="filter_label_unnamed">Label %1$d</string>
+    <string name="filter_color_custom">Custom colour</string>
+    <string name="filter_attendees_title">Attendees</string>
+    <string name="filter_attendees_hint">Only events that at least one of the ticked members attends.</string>
+    <string name="filter_attendees_empty">TimeTree lists no members for this calendar.</string>
+    <string name="filter_member_unnamed">Unnamed member</string>
+    <string name="filter_member_left">Left the calendar</string>
+    <string name="filter_text_title">Words</string>
+    <string name="filter_include">Only if it contains</string>
+    <string name="filter_exclude">Skip if it contains</string>
+    <string name="filter_text_hint">Separate several words with commas. They are searched in title, note and location, ignoring upper and lower case.</string>
+    <string name="filter_save_note">The filter is saved together with the calendar list.</string>
+    <string name="filter_clear">Clear</string>
+    <string name="filter_done">Done</string>
+    <string name="filter_summary_all">All</string>
+    <plurals name="filter_summary_labels">
+        <item quantity="one">%d label</item>
+        <item quantity="other">%d labels</item>
+    </plurals>
+    <plurals name="filter_summary_people">
+        <item quantity="one">%d person</item>
+        <item quantity="other">%d people</item>
+    </plurals>
+    <plurals name="filter_summary_words">
+        <item quantity="one">%d word</item>
+        <item quantity="other">%d words</item>
+    </plurals>
+    <plurals name="filter_summary_skip_words">
+        <item quantity="one">skips %d word</item>
+        <item quantity="other">skips %d words</item>
+    </plurals>
+
+    <!-- Names of TimeTree's label colours, shown for labels without a name (as TimeTree does) -->
+    <string name="label_color_emerald_green">Emerald green</string>
+    <string name="label_color_modern_cyan">Modern cyan</string>
+    <string name="label_color_deep_sky_blue">Deep sky blue</string>
+    <string name="label_color_pastel_brown">Pastel brown</string>
+    <string name="label_color_midnight_black">Midnight black</string>
+    <string name="label_color_apple_red">Apple red</string>
+    <string name="label_color_french_rose">French rose</string>
+    <string name="label_color_coral_pink">Coral pink</string>
+    <string name="label_color_bright_orange">Bright orange</string>
+    <string name="label_color_soft_violet">Soft violet</string>
+    <string name="label_color_cyan">Cyan</string>
+    <string name="label_color_light_blue">Light Blue</string>
+    <string name="label_color_blue">Blue</string>
+    <string name="label_color_indigo">Indigo</string>
+    <string name="label_color_green">Green</string>
+    <string name="label_color_deep_purple">Deep Purple</string>
+    <string name="label_color_dark_gray">Dark Gray</string>
+    <string name="label_color_light_green">Light Green</string>
+    <string name="label_color_purple">Purple</string>
+    <string name="label_color_lime">Lime</string>
+    <string name="label_color_pink">Pink</string>
+    <string name="label_color_deep_orange">Deep Orange</string>
+    <string name="label_color_orange">Orange</string>
+    <string name="label_color_yellow">Yellow</string>
+    <string name="label_color_amber">Amber</string>
 
     <!-- Target -->
     <string name="target_title">Target calendar</string>

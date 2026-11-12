@@ -74,7 +74,80 @@
     <string name="sources_unavailable">Kein Zugriff mehr. Die Kopien bleiben erhalten, bis du die Auswahl aufhebst.</string>
     <string name="sources_error_sign_in">TimeTree akzeptiert die gespeicherte Anmeldung nicht mehr.</string>
     <string name="sources_remove_title">Kopien entfernen?</string>
-    <string name="sources_remove_text">Die Kopien dieser Kalender werden aus deinem Google-Kalender gelöscht: %1$s. Deine eigenen Termine bleiben unverändert.</string>
+    <string name="sources_remove_calendars">Die Kopien dieser Kalender werden aus %2$s gelöscht: %1$s.</string>
+    <plurals name="sources_remove_filtered">
+        <item quantity="one">%1$d Kopie passt nicht mehr und wird aus %2$s entfernt.</item>
+        <item quantity="other">%1$d Kopien passen nicht mehr und werden aus %2$s entfernt.</item>
+    </plurals>
+    <string name="sources_remove_untouched">Deine eigenen Termine bleiben unverändert.</string>
+    <string name="sources_filter_line">Termine: %1$s</string>
+    <string name="sources_filter_open">Termine auswählen</string>
+    <string name="sources_filtered_name">%1$s (gefiltert)</string>
+
+    <!-- Filter-Editor -->
+    <string name="filter_title">Termine auswählen</string>
+    <string name="filter_intro">Welche Termine aus %1$s kopiert werden. Ein leerer Abschnitt schränkt nichts ein. Füllst du mehrere Abschnitte aus, muss ein Termin zu allen passen. Ein Termin mit einem Wort aus „Überspringen, wenn er enthält“ wird nie kopiert.</string>
+    <string name="filter_labels_title">Labels</string>
+    <string name="filter_labels_hint">Nur Termine mit einem der angehakten Labels.</string>
+    <string name="filter_labels_empty">TimeTree zeigt für diesen Kalender keine Labels.</string>
+    <string name="filter_label_unnamed">Label %1$d</string>
+    <string name="filter_color_custom">Eigene Farbe</string>
+    <string name="filter_attendees_title">Teilnehmer</string>
+    <string name="filter_attendees_hint">Nur Termine, an denen mindestens eines der angehakten Mitglieder teilnimmt.</string>
+    <string name="filter_attendees_empty">TimeTree zeigt für diesen Kalender keine Mitglieder.</string>
+    <string name="filter_member_unnamed">Mitglied ohne Namen</string>
+    <string name="filter_member_left">Hat den Kalender verlassen</string>
+    <string name="filter_text_title">Wörter</string>
+    <string name="filter_include">Nur, wenn er enthält</string>
+    <string name="filter_exclude">Überspringen, wenn er enthält</string>
+    <string name="filter_text_hint">Mehrere Wörter mit Kommas trennen. Gesucht wird in Titel, Notiz und Ort, unabhängig von Groß- und Kleinschreibung.</string>
+    <string name="filter_save_note">Der Filter wird zusammen mit der Kalenderauswahl gespeichert.</string>
+    <string name="filter_clear">Zurücksetzen</string>
+    <string name="filter_done">Fertig</string>
+    <string name="filter_summary_all">Alle</string>
+    <plurals name="filter_summary_labels">
+        <item quantity="one">%d Label</item>
+        <item quantity="other">%d Labels</item>
+    </plurals>
+    <plurals name="filter_summary_people">
+        <item quantity="one">%d Person</item>
+        <item quantity="other">%d Personen</item>
+    </plurals>
+    <plurals name="filter_summary_words">
+        <item quantity="one">%d Wort</item>
+        <item quantity="other">%d Wörter</item>
+    </plurals>
+    <plurals name="filter_summary_skip_words">
+        <item quantity="one">%d Ausschlusswort</item>
+        <item quantity="other">%d Ausschlusswörter</item>
+    </plurals>
+
+    <!-- Namen der Labelfarben von TimeTree (wie in TimeTrees deutscher App; die ersten zehn auf Englisch) -->
+    <string name="label_color_emerald_green">Emerald green</string>
+    <string name="label_color_modern_cyan">Modern cyan</string>
+    <string name="label_color_deep_sky_blue">Deep sky blue</string>
+    <string name="label_color_pastel_brown">Pastel brown</string>
+    <string name="label_color_midnight_black">Midnight black</string>
+    <string name="label_color_apple_red">Apple red</string>
+    <string name="label_color_french_rose">French rose</string>
+    <string name="label_color_coral_pink">Coral pink</string>
+    <string name="label_color_bright_orange">Bright orange</string>
+    <string name="label_color_soft_violet">Soft violet</string>
+    <string name="label_color_cyan">Cyan</string>
+    <string name="label_color_light_blue">Hellblau</string>
+    <string name="label_color_blue">Blau</string>
+    <string name="label_color_indigo">Indigo</string>
+    <string name="label_color_green">Grün</string>
+    <string name="label_color_deep_purple">Dunkelviolett</string>
+    <string name="label_color_dark_gray">Dunkelgrau</string>
+    <string name="label_color_light_green">Hellgrün</string>
+    <string name="label_color_purple">Violett</string>
+    <string name="label_color_lime">Lindgrün</string>
+    <string name="label_color_pink">Rosa</string>
+    <string name="label_color_deep_orange">Tieforange</string>
+    <string name="label_color_orange">Orange</string>
+    <string name="label_color_yellow">Gelb</string>
+    <string name="label_color_amber">Bernsteinfarben</string>
 
     <!-- Target -->
     <string name="target_title">Zielkalender</string>
