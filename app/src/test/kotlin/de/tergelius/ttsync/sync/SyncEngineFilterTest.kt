@@ -63,6 +63,8 @@ class SyncEngineFilterTest {
     assertEquals(impact, report.counts.deleted)
     assertEquals(0, report.counts.added + report.counts.updated)
     assertEquals(2, report.counts.filtered)
+    // Only the unknown and the out-of-window row are left alone; the deleted copies were the diff's.
+    assertEquals(2, report.counts.unmanagedMarked)
     assertEquals(kept, h.copies()) // the kept copies are untouched rows
     assertEquals(setOf(A1, SERIES), h.store.mappings.all().map { it.uuid }.toSet())
     assertEquals(filter.fingerprint(), h.store.cursors.get(CAL_A)!!.filterHash)
@@ -73,6 +75,34 @@ class SyncEngineFilterTest {
     assertEquals(SyncMode.INCREMENTAL, next.mode())
     assertEquals(0, next.counts.writes)
     assertEquals(2, next.counts.filtered)
+  }
+
+  @Test
+  fun incrementalEditsAcrossAnUnchangedFilterDeleteAndInsertCopies() = runTest {
+    h.client.edit(CAL_A, A1) { it.copy(labelId = 1) }
+    h.client.edit(CAL_A, SERIES) { it.copy(labelId = 1) }
+    val filter = EventFilter(labelIds = setOf(1))
+    h.setFilter(CAL_A, filter)
+    h.sync().assertOk()
+    assertEquals(setOf(A1, SERIES), h.copies().keys)
+    val series = h.copies().getValue(SERIES)
+
+    // In TimeTree, A1 loses the label and A2 gets it; the filter stays as it is.
+    h.client.edit(CAL_A, A1) { it.copy(labelId = 2) }
+    h.client.edit(CAL_A, A2) { it.copy(labelId = 1) }
+    val report = h.sync().assertOk()
+
+    assertEquals(SyncMode.INCREMENTAL, report.mode())
+    assertEquals(1, report.counts.deleted)
+    assertEquals(1, report.counts.added)
+    assertEquals(0, report.counts.updated)
+    assertEquals(2, report.counts.filtered) // A1 and A3
+    assertEquals(setOf(A2, SERIES), h.copies().keys)
+    assertEquals(series, h.copies().getValue(SERIES))
+    assertNull(h.store.mappings.get(A1))
+    assertEquals(h.copies().getValue(A2).id, h.store.mappings.get(A2)?.eventId)
+    assertEquals(filter.fingerprint(), h.store.cursors.get(CAL_A)!!.filterHash)
+    h.assertForeignUntouched()
   }
 
   @Test
@@ -265,6 +295,31 @@ class SyncEngineFilterTest {
     val a3 = h.store.mappings.get(A3)!!
     h.store.mappings.upsert(listOf(a3.copy(targetCalId = EngineHarness.OTHER)))
     assertEquals(0, h.engine.filterImpact(CAL_A, noMeals))
+  }
+
+  @Test
+  fun filterImpactFromAnActiveFilterToAStricterOneAndBack() = runTest {
+    h.setFilter(CAL_A, noMeals)
+    h.sync().assertOk()
+    // A2 and A3 are stored as snapshots but have no copies: they never count.
+    assertEquals(setOf(A1, SERIES), h.copies().keys)
+    assertEquals(0, h.engine.filterImpact(CAL_A, noMeals))
+    val stricter = EventFilter(excludeTerms = listOf("lunch", "dinner", "weekly"))
+    assertEquals(1, h.engine.filterImpact(CAL_A, stricter)) // SERIES
+    assertEquals(2, h.engine.filterImpact(CAL_A, nothing)) // A1 and SERIES, not 4
+
+    h.setFilter(CAL_A, stricter)
+    assertEquals(1, h.sync().assertOk().counts.deleted)
+    assertEquals(setOf(A1), h.copies().keys)
+
+    // Back to the wider filter: nothing to delete, and the run copies SERIES again.
+    assertEquals(0, h.engine.filterImpact(CAL_A, noMeals))
+    h.setFilter(CAL_A, noMeals)
+    val back = h.sync().assertOk()
+    assertEquals(0, back.counts.deleted)
+    assertEquals(1, back.counts.added)
+    assertEquals(setOf(A1, SERIES), h.copies().keys)
+    h.assertForeignUntouched()
   }
 
   @Test
