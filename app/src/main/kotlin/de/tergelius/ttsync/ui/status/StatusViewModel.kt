@@ -115,6 +115,10 @@ data class StatusUiState(
       setupStep: SetupStep,
       nowMillis: Long,
     ): StatusUiState {
+      // The clock ticks once a minute, so a run that finished after the last tick is "in the
+      // future". The real time is at least the newest stored timestamp; without this, "Last
+      // successful sync" reads "In 0 minutes" right after a sync.
+      val now = maxOf(nowMillis, status.lastSuccessAt ?: nowMillis)
       val device = live.device
       val report = status.lastReport
       val reportProblem = report?.failure?.problem
@@ -144,7 +148,7 @@ data class StatusUiState(
           schedule.running -> SyncHealth.RUNNING
           liveProblem == SyncProblem.TARGET_DELETED -> SyncHealth.TARGET_DELETED
           liveProblem != null -> SyncHealth.NEEDS_ATTENTION
-          else -> effective.health(running = false, nowMillis = nowMillis)
+          else -> effective.health(running = false, nowMillis = now)
         }
       // Known to be off only: an account Android hides from the app counts as unknown (B2).
       val googleSyncOff =
@@ -166,20 +170,20 @@ data class StatusUiState(
         problem = problem,
         failureCode = if (liveProblem == null) effective.lastReport?.failure?.code else null,
         lastSuccessAt = status.lastSuccessAt,
-        stale = status.isStale(nowMillis),
+        stale = status.isStale(now),
         lastReport = report,
         consecutiveFailures = status.consecutiveFailures,
         nextRunAt = schedule.nextRunAtMillis,
         periodicScheduled = schedule.periodicScheduled,
         running = schedule.running,
         runNowPending = schedule.runNowPending,
-        rateLimitedUntil = status.rateLimitedUntil?.takeIf { it > nowMillis },
+        rateLimitedUntil = status.rateLimitedUntil?.takeIf { it > now },
         warnings = warnings,
         pausedCalendars = settings.sources.filter { it.id in pausedIds },
         sources = settings.sources,
         targetName = settings.targetDisplayName,
         notificationPermissionMissing = device?.notificationPermissionMissing == true,
-        nowMillis = nowMillis,
+        nowMillis = now,
         notUploaded = notUploaded,
       )
     }

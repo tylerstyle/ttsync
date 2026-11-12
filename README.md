@@ -67,14 +67,30 @@ it updated.
    `ttsync-<version>.apk` from the latest release.
 2. Open the downloaded file. Android asks whether your browser (or file manager) may install unknown
    apps. Allow it and install. You can turn the permission off again afterwards.
-3. Google Play Protect may warn you about an app from an unknown developer. Choose to install
-   anyway.
+3. Confirm "Install this app?" with **Install**.
+4. Google Play Protect may show **App scan recommended** and offer to send the app to Google for a
+   security scan. That's fine: the APK is public. It may start the scan by itself after a few
+   seconds and then lets the installation continue. If your phone warns about an app from an
+   unknown developer instead, open the details and choose to install anyway.
 
 **With Obtainium (automatic updates)**
 
-1. Install [Obtainium](https://github.com/ImranR98/Obtainium).
-2. Tap **Add App** and enter the source URL `https://github.com/tylerstyle/ttsync`.
-3. Install. Obtainium checks for new releases and offers them as updates.
+1. Install [Obtainium](https://github.com/ImranR98/Obtainium). On its first start it asks for
+   notifications and shows a welcome note and a note about Google's developer verification; confirm
+   them.
+2. Tap **Add** (bottom right), enter `https://github.com/tylerstyle/ttsync` as *App source URL* and
+   tap **+**. Leave the other options as they are. The app is listed as "ttsync" until it is
+   installed.
+3. Open it and tap **Install**. The first time, Android opens "Install unknown apps" for Obtainium:
+   turn on *Allow from this source* and go back. Then confirm with **Install**. Play Protect may
+   recommend a scan, as described above.
+4. From now on, Obtainium checks for new releases and offers them as updates.
+
+**Google's developer verification.** Google is introducing a rule that apps installed outside
+Google Play on certified Android phones must come from a registered developer. It applies in
+Brazil, Indonesia, Singapore and Thailand since 30 September 2026, and elsewhere from 2027. This app
+isn't registered. In those four countries, installing it may already be blocked or need extra
+steps; elsewhere, installing works as described.
 
 **Check that your copy is genuine.** Every release is signed with the same key. Its certificate
 fingerprint (SHA-256) is:
@@ -85,6 +101,7 @@ C0:FD:19:AE:C1:8E:BB:8F:5B:B2:59:5D:4A:91:B1:19:4C:C8:9D:67:03:4C:32:FF:73:7F:E3
 
 - **In the app:** open Settings → **About and privacy** and compare "Signing certificate (SHA-256)"
   with the fingerprint above.
+- **In Obtainium:** the app's page shows the same value as *Certificate Hash*.
 - **On a computer (optional):** each release lists the APK's SHA-256 in its notes and in a `.sha256`
   file. Compare it with `sha256sum ttsync-<version>.apk` (macOS: `shasum -a 256`, Windows:
   `certutil -hashfile ttsync-<version>.apk SHA256`). With the Android SDK, `apksigner verify
@@ -311,10 +328,14 @@ nicht. Nutzung auf eigenes Risiko. Kopiere nur Kalender, deren Besitzer zugestim
   Sync mit dieser E-Mail und diesem Passwort an. In einer deutschsprachigen TimeTree-App können die
   Menüpunkte übersetzt heißen.
 - **Installation:** Die APK von der [Releases-Seite](https://github.com/tylerstyle/ttsync/releases)
-  laden und „Unbekannte Apps installieren“ für Browser oder Dateimanager erlauben. Oder mit
-  [Obtainium](https://github.com/ImranR98/Obtainium) und der URL
-  `https://github.com/tylerstyle/ttsync`, dann kommen Updates automatisch. Unter Einstellungen →
-  „Über die App und Datenschutz“ muss der Fingerabdruck des Signaturzertifikats lauten:
+  laden und „Unbekannte Apps installieren“ für Browser oder Dateimanager erlauben. Oder in
+  [Obtainium](https://github.com/ImranR98/Obtainium) die URL `https://github.com/tylerstyle/ttsync`
+  hinzufügen und installieren (Obtainium braucht dafür einmal „Unbekannte Apps installieren“), dann
+  kommen Updates automatisch. Google Play Protect empfiehlt eventuell, die App zum Scannen an Google
+  zu schicken: Das ist in Ordnung, die APK ist öffentlich. Googles Entwicklerverifizierung gilt in
+  Deutschland noch nicht (geplant ab 2027); die App ist nicht registriert. Unter Einstellungen →
+  „Über die App und Datenschutz“ (in Obtainium als „Certificate Hash“) muss der Fingerabdruck des
+  Signaturzertifikats lauten:
   `C0:FD:19:AE:C1:8E:BB:8F:5B:B2:59:5D:4A:91:B1:19:4C:C8:9D:67:03:4C:32:FF:73:7F:E3:7A:A6:39:C1:13`.
 - **Einrichtung:** Anmelden, TimeTree-Kalender auswählen, Ziel-Google-Kalender wählen (am besten
   einen eigenen, z. B. „TimeTree“, auf calendar.google.com anlegen), Akkunutzung

@@ -3,15 +3,15 @@
 Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
 [DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
 
-Two runs on 2026-11-12, both on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
+Three runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
 driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
 "TT test details" (location, note, URL, label) and "TT test all-day" (two days). Target: the user's
 Google calendar, which already held 7 events of its own.
 
-**Safety invariant held in both runs:** the target's 7 own events were hashed before the run and
-compared at every checkpoint (8 in run 1, 3 in run 2): never changed. After each run the target held
+**Safety invariant held in every run:** the target's 7 own events were hashed before the run and
+compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3): never changed. After each run the target held
 only those 7 events again.
 
 ## Run 1: debug build `d2756c2`
@@ -55,6 +55,25 @@ only those 7 events again.
 | Release: "Sync now" more than 60 s after a run | Pass |
 | "Remove all copies", uninstall | Pass: no marked rows left |
 
+## Run 3: published release 0.1.0, installed through Obtainium
+
+The way a user installs it: Obtainium 1.7.4 (its APK and certificate checked against its README),
+then **Add** → `https://github.com/tylerstyle/ttsync` → **Install**.
+
+| Area | Result |
+|---|---|
+| Obtainium finds v0.1.0 and picks `ttsync-0.1.0.apk` (ignores the `.sha256` and mapping assets); no warnings or extra questions | Pass |
+| Install dialogs: "Install unknown apps" for Obtainium, "Install this app?", Play Protect "App scan recommended" | Pass: Play Protect started the cloud scan by itself after about 15 s, verdict SAFE, install continued. README updated |
+| Installed APK byte-identical to the release asset, release certificate, versionCode 100, installer Obtainium | Pass |
+| About and Obtainium's "Certificate Hash" show the release fingerprint | Pass |
+| Notifications denied | Pass: Status keeps "Syncing normally" and adds a "Notifications are off" warning with **Turn on**; the checklist lists it as a problem |
+| First sync after setup, copies match TimeTree, all uploaded (`dirty=0`) within 2 min | Pass |
+| "Sync now" right after a run | Pass (**R1 fixed**): "Synced 7 s ago, nothing to do" |
+| Release logs | Pass: no `TtSync` lines, nothing private from the app |
+| Obtainium update check | Pass: "v0.1.0 Installed / Latest", no update offered, no version-detection error |
+| "Remove all copies", Google purges them, uninstall | Pass: no marked rows left |
+| "Last successful sync" right after a run | **Fail (O1)**: "(In 0 minutes)" |
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -62,7 +81,8 @@ only those 7 events again.
 | B1 | High | The feed is ordered newest change first, and its `since` pages *backwards*. The app stored it as an incremental cursor, so INCREMENTAL runs never saw a change; only FULL runs did. | Fix round 1 (`180ad20`): every read starts at the top of the feed and stops at the stored high-water mark (newest `updated_at`/`deactivated_at` seen) minus a 2 min overlap. Only a complete FULL read may delete by absence. Calendars of up to 3 pages run FULL every time, larger ones at least every 6 h. Verified in run 2. |
 | B2 | Medium | Since Android 13, `getSyncAutomatically` answers "off" and `requestSync` does nothing for an account the app cannot see, which is the normal case for the Google account: a false "Google sync is off" on every run. | Fix round 1: the account switch counts only if the account is visible to the app, otherwise it is unknown and gives no warning. Instead the app warns when its copies are still `dirty` 30 min after it wrote them. `requestSync` is best effort. Verified in run 2. |
 | F4 | Info | A second "Sync now" within 60 s was queued as delayed, non-expedited work. With the app in the background it waited until the app came back to the foreground. | Fix round 1: "now" work is always expedited and never delayed; a "Sync now" within 60 s of a successful run queues nothing and Status says "Synced N s ago". Verified in run 2 through the debug receiver; the UI note is R1. |
-| R1 | Low | The "Synced N s ago" snackbar never showed: Status cleared the note, which was its `LaunchedEffect` key, before `showSnackbar`, so Compose cancelled the effect. | Fix round 2: the note is a one-off `SyncedNote` with an id, consumed only after `showSnackbar` returns; a newer note is never cleared by an older one (`StatusViewModelTest`). Not yet retested on the device. |
+| R1 | Low | The "Synced N s ago" snackbar never showed: Status cleared the note, which was its `LaunchedEffect` key, before `showSnackbar`, so Compose cancelled the effect. | Fix round 2: the note is a one-off `SyncedNote` with an id, consumed only after `showSnackbar` returns; a newer note is never cleared by an older one (`StatusViewModelTest`). Verified in run 3. |
+| O1 | Low | Right after a run, "Last successful sync" read "(In 0 minutes)": Status's clock ticks once a minute, so a run that finished after the last tick lay in its future. | 0.1.1: Status takes the newer of the clock and the last success as "now" (`StatusViewModelTest`). Not yet on the device. |
 | B3 | Low, open | TimeTree's default labels have empty names (the apps localize them), so copies get no `Label:` line. | None yet: map the default label ids to names, or document that only renamed labels appear. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in
@@ -74,9 +94,9 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
 
 - **Feeds of more than 3 pages** (about 300 events) on a real calendar: the high-water INCREMENTAL
   path and the 6-hour FULL ran only in unit tests. The test calendar always fit on one page.
-- **Notifications denied**: the user allowed notifications during setup in both runs, and no
-  failure notification was due.
+- **A failure notification while notifications are denied**: run 3 checked the warning on Status
+  and in the checklist, but no failure was due, so no notification was missed.
 - **Other vendors and Android versions**: only LineageOS 24 on one phone; no vendor battery
   managers (Samsung, Xiaomi, OxygenOS, ...), no Android 8-16.
-- The R1 fix on the device, a periodic run of the fixed build, and the Keystore key removal at
-  sign-out (needs root).
+- The O1 fix on the device, a periodic run of the fixed build, an update through Obtainium (needs
+  a second release), and the Keystore key removal at sign-out (needs root).

@@ -262,6 +262,19 @@ class StatusViewModelTest {
   }
 
   @Test
+  fun aRunAfterTheLastClockTickIsNotInTheFuture() {
+    // Device test O1: the minute clock lagged behind the run that just finished, so "Last
+    // successful sync" read "In 0 minutes".
+    val justNow = NOW + 20_000
+    val state = derive(status = SyncStatus(lastReport = report(), lastSuccessAt = justNow))
+    assertEquals(justNow, state.nowMillis)
+    assertFalse(state.stale)
+    assertEquals(SyncHealth.OK, state.health)
+    // An older success leaves the clock as it is.
+    assertEquals(NOW, derive().nowMillis)
+  }
+
+  @Test
   fun viewModelCombinesTheStoresAndSyncsNow() = runTest {
     val g = UiTestGraph(settings = settings, credentials = SIGNED_IN, device = okDevice)
     g.gateway.calendars = listOf(calendar(15, "TimeTree"))
