@@ -167,7 +167,7 @@ class FakeEngine(private val calls: Calls) : SyncEngine {
 
   override suspend fun run(request: SyncRequest): SyncReport = error("not used by the UI")
 
-  override suspend fun removeAllCopies(target: TargetCalendar): RemovalReport {
+  override suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean): RemovalReport {
     calls.add("engine.removeAllCopies(${target.calendarId})")
     removeAllError?.let { throw it }
     return removal

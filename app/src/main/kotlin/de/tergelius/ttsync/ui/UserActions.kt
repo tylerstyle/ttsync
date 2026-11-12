@@ -126,7 +126,7 @@ class UserActions(
     if (old != null) {
       scheduler.cancelAll()
       when (old.check(gateway.calendar(old.calendarId))) {
-        TargetCheck.OK -> removal = engine.removeAllCopies(old)
+        TargetCheck.OK -> removal = engine.removeAllCopies(old, stopSyncing = false)
         // The calendar and its copies are gone: only the mappings are left to clear.
         TargetCheck.MISSING -> engine.dropMappings()
         // The old calendar can no longer be written safely: leave its rows alone.
