@@ -5,8 +5,10 @@ import de.tergelius.ttsync.calendar.CalendarInfo
 import de.tergelius.ttsync.calendar.FakeCalendarGateway
 import de.tergelius.ttsync.calendar.TargetCalendar
 import de.tergelius.ttsync.mapping.Desired
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.mapping.EventMapper
 import de.tergelius.ttsync.mapping.EventSpec
+import de.tergelius.ttsync.mapping.LabelNames
 import de.tergelius.ttsync.mapping.MappingInput
 import de.tergelius.ttsync.mapping.MappingResult
 import de.tergelius.ttsync.mapping.MappingStats
@@ -128,6 +130,14 @@ class EngineHarness {
 
   fun selectB() {
     settings.value = settings.value.copy(sources = settings.value.sources + SourceCalendar(CAL_B, "Club"))
+  }
+
+  /** Sets (or with null clears) the filter of the selected calendar [calendarId]. */
+  fun setFilter(calendarId: Long, filter: EventFilter?) {
+    val sources = settings.value.sources
+    check(sources.any { it.id == calendarId }) { "calendar $calendarId not selected" }
+    settings.value =
+      settings.value.copy(sources = sources.map { if (it.id == calendarId) it.copy(filter = filter) else it })
   }
 
   suspend fun sync(full: Boolean = false, trigger: SyncTrigger = SyncTrigger.MANUAL): SyncReport =
@@ -344,7 +354,9 @@ class EngineHarness {
   /**
    * A small stand-in for phase 3's mapper with the same contract: single timed events, a series
    * from an RRULE (open-ended, `endAt = Long.MAX_VALUE`) whose EXDATE lists its overrides, Absent
-   * for birthdays, memos and deactivated events in the window, nothing for events before the window.
+   * for birthdays, memos and deactivated events in the window, nothing for events before the window,
+   * and Absent (listed in `filtered`) for live in-window events the filter excludes. The filter and
+   * the label line are the real ones ([EventFilter.matches], [LabelNames.forCopy]).
    */
   class FakeMapper : EventMapper {
     var calls = 0
@@ -357,6 +369,8 @@ class EngineHarness {
       val parentOf = LinkedHashMap<String, String>()
       var skipped = 0
       var outOfWindow = 0
+      val filter = input.filter?.takeUnless { it.isEmpty }
+      val filtered = LinkedHashSet<String>()
       for (e in input.events.sortedBy { it.uuid }) {
         val parent = e.recurringUuid ?: e.parentId
         if (parent != null && parent in byUuid) parentOf[e.uuid] = parent
@@ -371,14 +385,23 @@ class EngineHarness {
             desired[e.uuid] = Desired.Absent
           }
           e.isDeactivated -> desired[e.uuid] = Desired.Absent
+          filter != null && !filter.matches(e) -> {
+            filtered += e.uuid
+            desired[e.uuid] = Desired.Absent
+          }
           else -> desired[e.uuid] = Desired.Write(spec(e, input, byUuid.values), endAt)
         }
       }
-      return MappingResult(desired, parentOf, MappingStats(skipped = skipped, outOfWindow = outOfWindow))
+      return MappingResult(
+        desired,
+        parentOf,
+        MappingStats(skipped = skipped, outOfWindow = outOfWindow, filtered = filtered.size),
+        filtered,
+      )
     }
 
     private fun spec(e: TtEvent, input: MappingInput, all: Collection<TtEvent>): EventSpec {
-      val label = e.labelId?.let { input.labels[it]?.name }?.let { "Label: $it" }
+      val label = e.labelId?.let { input.labels[it] }?.let(LabelNames::forCopy)?.let { "Label: $it" }
       val description = Marker.append(listOfNotNull(e.note, label).joinToString("\n"), e.uuid)
       val rrule = e.recurrences.firstOrNull()?.removePrefix("RRULE:")
       val exdate =

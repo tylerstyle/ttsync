@@ -10,6 +10,7 @@ import de.tergelius.ttsync.calendar.TargetCalendar
 import de.tergelius.ttsync.calendar.TargetCheck
 import de.tergelius.ttsync.calendar.TargetUnavailableException
 import de.tergelius.ttsync.mapping.Desired
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.mapping.EventMapper
 import de.tergelius.ttsync.mapping.MappingInput
 import de.tergelius.ttsync.mapping.MappingResult
@@ -54,8 +55,9 @@ import kotlinx.serialization.builtins.ListSerializer
  *   and a user action never overlap.
  * - **Safety.** Writes go only through [CalendarGateway], whose R1–R5 rules hold; only rows in the
  *   target calendar that carry the marker of the expected uuid are ever updated or deleted. During
- *   a sync, only the diff (step 5) deletes, and only in-window mappings of active calendars. The
- *   adoption scan only adopts (and removes duplicates of live, active uuids).
+ *   a sync, the diff (step 5) deletes only in-window mappings of active calendars. The adoption
+ *   scan only adopts, removes duplicates of live, active uuids, and removes unmapped leftovers of
+ *   live, in-window events that their active calendar's filter excludes.
  * - **Idempotent.** A run after an unchanged TimeTree writes nothing.
  * - **Cursor.** A calendar's cursor (its high-water mark, see [SyncCursor.highWater]) advances only
  *   after all its writes succeeded and their mappings are committed. It is computed from the
@@ -100,6 +102,16 @@ interface SyncEngine {
 
   /** Debug `DROP_MAPPINGS`: clears the mapping table only, so the next run must adopt. */
   suspend fun dropMappings()
+
+  /**
+   * How many copies of TimeTree calendar [ttCalId] the next run would delete if its filter became
+   * [filter], for the confirmation before saving a filter. Read-only and without the run lock (a
+   * sync may be going on; the number is an estimate as of the last run): maps the stored snapshots
+   * with [filter] and counts the in-window mappings in the current target whose events it would
+   * exclude. 0 for no filter, no target, or a paused calendar (its copies are never touched).
+   * Unmapped leftovers are not counted. Blocking: call off the main thread.
+   */
+  suspend fun filterImpact(ttCalId: Long, filter: EventFilter?): Int
 }
 
 /** One run's parameters. */
@@ -202,6 +214,32 @@ class DefaultSyncEngine(
       db.mappings.clear()
       log.i("mappings dropped")
     }
+  }
+
+  override suspend fun filterImpact(ttCalId: Long, filter: EventFilter?): Int {
+    val active = filter?.takeUnless { it.isEmpty } ?: return 0
+    val target = settings.current().target ?: return 0
+    val cursor = db.cursors.get(ttCalId)
+    if (cursor?.state == CalendarState.PAUSED) return 0
+    val events =
+      db.snapshots.forCalendar(ttCalId).mapNotNull {
+        try {
+          TtEvent.fromJson(it.json)
+        } catch (e: TtError.ApiChanged) {
+          null
+        }
+      }
+    val zoneId = zone()
+    val today = Instant.ofEpochMilli(nowMillis()).atZone(zoneId).toLocalDate()
+    val windowStart = EventMapper.windowStartMillis(today, zoneId)
+    val labels = decodeLabels(cursor?.labelsJson).orEmpty().associateBy { it.id }
+    val excluded = mapper.map(MappingInput(events, labels, today, zoneId, active)).filtered
+    val impact =
+      db.mappings.forCalendar(ttCalId).count {
+        it.targetCalId == target.calendarId && it.uuid in excluded && it.endAt >= windowStart
+      }
+    log.i("filter impact for calendar $ttCalId: $impact copies")
+    return impact
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -371,6 +409,12 @@ class DefaultSyncEngine(
     /** An extra row of a live, active uuid found by the adoption scan. */
     DUPLICATE,
 
+    /**
+     * An unmapped marked row of a live, in-window event that its active calendar's filter
+     * excludes, found by the adoption scan (e.g. after a reinstall or lost mappings).
+     */
+    LEFTOVER,
+
     /** Mapped row with a different hash. */
     UPDATE,
 
@@ -408,8 +452,12 @@ class DefaultSyncEngine(
     var rejected = 0
   }
 
-  /** One selected TimeTree calendar during a run. */
-  private class CalendarWork(val id: Long, val cursor: SyncCursor) {
+  /**
+   * One selected TimeTree calendar during a run. [filter] is its active filter (null: every event);
+   * [filterHash] is stored in its cursor once its writes succeeded.
+   */
+  private class CalendarWork(val id: Long, val cursor: SyncCursor, val filter: EventFilter?) {
+    val filterHash: String? = filter?.fingerprint()
     var paused = cursor.state == CalendarState.PAUSED
     var mode: SyncMode? = null
     var stored: List<Snapshot> = emptyList()
@@ -442,6 +490,7 @@ class DefaultSyncEngine(
     var result: MappingResult = MappingResult(emptyMap(), emptyMap())
     var affected: Set<String> = emptySet()
     val duplicates = mutableListOf<Planned>()
+    val leftovers = mutableListOf<Planned>()
     val counter = Counter()
 
     val desired: Map<String, Desired>
@@ -457,6 +506,7 @@ class DefaultSyncEngine(
         rejected = counter.rejected,
         unmatchedOverrides = result.stats.unmatchedOverrides,
         droppedRecurrenceLines = result.stats.droppedRecurrenceLines,
+        filtered = result.stats.filtered,
       )
   }
 
@@ -484,8 +534,14 @@ class DefaultSyncEngine(
     /** `_ID`s already adopted or being deleted as duplicates in this run. */
     private val claimed = HashSet<Long>()
 
-    /** Uuids that are [Desired.Write] in an active calendar: the only ones the scan may act on. */
+    /** Uuids that are [Desired.Write] in an active calendar: the only ones the scan may adopt. */
     private val activeWrites = HashMap<String, CalendarWork>()
+
+    /**
+     * Live, in-window uuids that the filter of their active calendar excludes: the only ones whose
+     * unmapped rows the scan may delete as leftovers.
+     */
+    private val activeFiltered = HashMap<String, CalendarWork>()
 
     suspend fun execute(): SyncReport {
       log.i("run started id=${request.runId} trigger=${request.trigger} forceFull=${request.forceFull}")
@@ -517,7 +573,7 @@ class DefaultSyncEngine(
       log.i(
         "run finished id=${request.runId} ok=${report.succeeded} problem=${failure?.problem} " +
           "written=${c.writes} added=${c.added} updated=${c.updated} deleted=${c.deleted} " +
-          "skipped=${c.skipped} adopted=${c.adopted} rejected=${c.rejected} " +
+          "skipped=${c.skipped} filtered=${c.filtered} adopted=${c.adopted} rejected=${c.rejected} " +
           "unmanaged=${c.unmanagedMarked} unmatched=${c.unmatchedOverrides} " +
           "paused=${report.calendars.count { it.state == CalendarState.PAUSED }} " +
           "warnings=${report.warnings.sorted().joinToString(",").ifEmpty { "none" }}"
@@ -574,6 +630,7 @@ class DefaultSyncEngine(
           CalendarWork(
             source.id,
             db.cursors.get(source.id) ?: SyncCursor(source.id, null, null, CalendarState.ACTIVE, null),
+            source.activeFilter,
           )
         works += work
         when {
@@ -591,6 +648,11 @@ class DefaultSyncEngine(
       for (work in active) {
         for ((uuid, desired) in work.desired) {
           if (desired is Desired.Write && uuid !in work.skippedUuids) activeWrites[uuid] = work
+        }
+      }
+      for (work in active) {
+        for (uuid in work.result.filtered) {
+          if (uuid !in work.skippedUuids && uuid !in activeWrites) activeFiltered[uuid] = work
         }
       }
       active.forEach { it.affected = affected(it) }
@@ -678,7 +740,7 @@ class DefaultSyncEngine(
       if (undecodable > 0) log.w("calendar ${work.id}: $undecodable snapshots unreadable; FULL")
 
       val cursor = work.cursor
-      val fullReason = fullReason(cursor, mapperChanged, undecodable)
+      val fullReason = fullReason(cursor, mapperChanged, undecodable, work.filterHash)
       val full = fullReason != null
       work.mode = if (full) SyncMode.FULL else SyncMode.INCREMENTAL
       val why =
@@ -732,9 +794,16 @@ class DefaultSyncEngine(
      * Why this calendar's run must be FULL, or null for INCREMENTAL (DESIGN.md section 5). Deleted
      * events seem to vanish from the feed rather than come back as tombstones, so only a FULL sees
      * them: a small feed ([SMALL_FEED_PAGES] pages or fewer at its last FULL) is read completely on
-     * every run, a larger one at least every [FULL_INTERVAL_MILLIS].
+     * every run, a larger one at least every [FULL_INTERVAL_MILLIS]. A changed filter needs a FULL
+     * too: copies of events it now excludes must go, and events it now includes must be copied,
+     * whether they changed or not.
      */
-    private fun fullReason(cursor: SyncCursor, mapperChanged: Boolean, undecodable: Int): String? {
+    private fun fullReason(
+      cursor: SyncCursor,
+      mapperChanged: Boolean,
+      undecodable: Int,
+      filterHash: String?,
+    ): String? {
       val lastFull = cursor.lastFullAt
       val pages = cursor.lastFullPages
       return when {
@@ -743,6 +812,7 @@ class DefaultSyncEngine(
         undecodable > 0 -> "unreadable snapshots"
         cursor.highWater == null -> "no high-water mark"
         lastFull == null || pages == null -> "no FULL recorded"
+        cursor.filterHash != filterHash -> "filter changed"
         pages <= SMALL_FEED_PAGES -> "small feed, pages=$pages"
         startedAt < lastFull -> "clock went back"
         startedAt - lastFull >= FULL_INTERVAL_MILLIS ->
@@ -766,7 +836,7 @@ class DefaultSyncEngine(
         }
       val result =
         try {
-          mapper.map(MappingInput(events, work.labels.associateBy { it.id }, today, zoneId))
+          mapper.map(MappingInput(events, work.labels.associateBy { it.id }, today, zoneId, work.filter))
         } catch (e: Exception) {
           log.e("calendar ${work.id}: mapper failed: ${e.javaClass.simpleName}")
           fail(SyncProblem.INTERNAL)
@@ -796,14 +866,16 @@ class DefaultSyncEngine(
 
     /**
      * Step 6. Builds the marker index. Only adopts (through the diff) and, with [withDuplicates],
-     * plans verified deletes of extra rows of uuids that are live and active. Every other marked row
-     * (unknown, dead, paused or out of window) is only counted.
+     * plans verified deletes of extra rows of uuids that are live and active, and of unmapped
+     * leftovers: rows of live, in-window events that their active calendar's filter excludes
+     * (approved for 0.2.0; with a mapping, the diff deletes the copy instead). Every other marked
+     * row (unknown, dead, paused or out of window) is only counted.
      */
     private suspend fun scan(withDuplicates: Boolean) {
       val rows = calendarCall { gateway.findMarkedRows(target) }
       val byUuid = rows.groupBy({ it.uuid }, { it.eventId }).mapValues { (_, ids) -> ids.sorted() }
       index = byUuid
-      unmanagedMarked = rows.count { it.uuid !in activeWrites }
+      val leftoverIds = HashSet<Long>()
       var duplicates = 0
       if (withDuplicates) {
         for ((uuid, ids) in byUuid) {
@@ -818,8 +890,23 @@ class DefaultSyncEngine(
             duplicates++
           }
         }
+        for ((uuid, ids) in byUuid) {
+          val work = activeFiltered[uuid] ?: continue
+          // A mapped copy is the diff's (Absent, in window); only the other rows are leftovers.
+          val mapped = mappingFor(uuid)?.eventId
+          for (id in ids) {
+            if (id == mapped || id in claimed) continue
+            work.leftovers += Planned(CalendarOp.Delete(id, uuid), Kind.LEFTOVER)
+            claimed += id
+            leftoverIds += id
+          }
+        }
       }
-      log.i("adoption scan: marked=${rows.size} unmanaged=$unmanagedMarked duplicates=$duplicates")
+      unmanagedMarked = rows.count { it.uuid !in activeWrites && it.eventId !in leftoverIds }
+      log.i(
+        "adoption scan: marked=${rows.size} unmanaged=$unmanagedMarked duplicates=$duplicates " +
+          "leftovers=${leftoverIds.size}"
+      )
     }
 
     private suspend fun adoptOrInsert(write: Desired.Write, hash: String, excluded: Set<Long>): Planned {
@@ -835,7 +922,7 @@ class DefaultSyncEngine(
 
     /** Step 5, the only place a sync deletes. */
     private suspend fun plan(work: CalendarWork): List<Planned> {
-      val ops = ArrayList<Planned>(work.duplicates)
+      val ops = ArrayList<Planned>(work.duplicates + work.leftovers)
       val planned = HashSet<String>()
       val verify = LinkedHashMap<Long, String>()
       val endAtFixes = mutableListOf<Mapping>()
@@ -959,7 +1046,8 @@ class DefaultSyncEngine(
                 if (!result.check.isGone()) work.counter.rejected++
                 forget(p)
               }
-              Kind.DUPLICATE -> if (!result.check.isGone()) work.counter.rejected++
+              Kind.DUPLICATE,
+              Kind.LEFTOVER -> if (!result.check.isGone()) work.counter.rejected++
               Kind.INSERT -> error("an insert cannot be refused")
             }
           }
@@ -998,6 +1086,8 @@ class DefaultSyncEngine(
             state = CalendarState.ACTIVE,
             labelsJson = TtJson.encodeToString(LABELS, work.labels),
             lastFullPages = work.fullPages ?: work.cursor.lastFullPages,
+            // Only now: a run that failed before this point keeps the old hash and runs FULL again.
+            filterHash = work.filterHash,
           )
         )
       }

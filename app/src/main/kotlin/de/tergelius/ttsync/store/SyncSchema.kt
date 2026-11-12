@@ -12,7 +12,7 @@ package de.tergelius.ttsync.store
  * update [CREATE] so a fresh install ends up with the same tables.
  */
 object SyncSchema {
-  const val VERSION = 2
+  const val VERSION = 3
 
   const val SNAPSHOT = "snapshot"
   const val MAPPING = "mapping"
@@ -53,7 +53,8 @@ object SyncSchema {
         last_full_at INTEGER,
         state TEXT NOT NULL,
         labels_json TEXT,
-        last_full_pages INTEGER
+        last_full_pages INTEGER,
+        filter_hash TEXT
       )
       """,
       "CREATE TABLE $META (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
@@ -90,7 +91,11 @@ object SyncSchema {
           """,
           "DROP TABLE $CURSOR",
           "ALTER TABLE ${CURSOR}_v2 RENAME TO $CURSOR",
-        )
+        ),
+      // 2 → 3 (0.2.0, filters): `cursor.filter_hash`, the fingerprint of the filter the last
+      // successful run applied. Null means no filter, which is what every 0.1.x cursor had, so the
+      // upgrade forces no FULL.
+      2 to listOf("ALTER TABLE $CURSOR ADD COLUMN filter_hash TEXT"),
     )
 
   fun create(sql: SqlConnection) {

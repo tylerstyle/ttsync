@@ -4,6 +4,7 @@ import de.tergelius.ttsync.calendar.CalendarGateway
 import de.tergelius.ttsync.calendar.CalendarInfo
 import de.tergelius.ttsync.calendar.TargetCalendar
 import de.tergelius.ttsync.calendar.TargetCheck
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.settings.CredentialStore
 import de.tergelius.ttsync.settings.Credentials
 import de.tergelius.ttsync.settings.Settings
@@ -101,20 +102,34 @@ class UserActions(
   /** What [saveSources] would change; the caller confirms if [removesCopies]. */
   suspend fun sourceChange(selected: List<SourceCalendar>): SourceChange {
     val current = settings.current()
-    val old = current.sources.map { it.id }.toSet()
+    val old = current.sources.associateBy { it.id }
     val new = selected.map { it.id }.toSet()
     return SourceChange(
       removed = current.sources.filter { it.id !in new },
       added = selected.filter { it.id !in old },
       hasTarget = current.target != null,
+      filterChanged =
+        selected.filter { s ->
+          val before = old[s.id] ?: return@filter false
+          before.activeFilter?.fingerprint() != s.activeFilter?.fingerprint()
+        },
     )
   }
+
+  /**
+   * How many copies of [ttCalId] a save with [filter] would delete ([SyncEngine.filterImpact]),
+   * for the confirmation before [saveSources]. Runs on [io].
+   */
+  suspend fun filterImpact(ttCalId: Long, filter: EventFilter?): Int =
+    withContext(io) { engine.filterImpact(ttCalId, filter) }
 
   /**
    * Saves the TimeTree calendar selection (Sources screen). Deselected calendars lose their copies
    * first (after the caller's confirm): the engine drops them from the selection under its mutex
    * once their copies are gone, so no run fetches them again. Then the new selection is saved, and
-   * newly selected calendars start a FULL sync.
+   * newly selected calendars, or a changed filter, start a FULL sync at once (the engine also runs
+   * a calendar FULL whenever its filter differs from the one its copies follow, so a periodic run
+   * would catch up too, only later). The caller confirms a filter change with [filterImpact] first.
    *
    * @throws RemovalFailedException if the copies could not be removed; nothing was changed.
    */
@@ -131,6 +146,9 @@ class UserActions(
       if (change.added.isNotEmpty()) {
         // The periodic work may have been cancelled ("Remove all copies", last calendar removed).
         scheduler.updatePeriodic(settings.current().interval)
+        scheduler.runNow(full = true, trigger = SyncTrigger.SETUP)
+      } else if (change.filterChanged.isNotEmpty()) {
+        // FULL, because a non-FULL request right after a run would be skipped (device test F4).
         scheduler.runNow(full = true, trigger = SyncTrigger.SETUP)
       }
     }
@@ -342,6 +360,8 @@ data class SourceChange(
   val removed: List<SourceCalendar>,
   val added: List<SourceCalendar>,
   val hasTarget: Boolean,
+  /** Calendars that stay selected with a filter that copies other events than before. */
+  val filterChanged: List<SourceCalendar> = emptyList(),
 ) {
   /** Copies exist that the change would delete: ask first. */
   val removesCopies: Boolean

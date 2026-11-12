@@ -42,9 +42,10 @@ Every change must keep these. Most of them have tests that fail if they break.
    than 1 hour (that was promised to calendar owners). Don't add features that write to TimeTree or
    poll more often.
 4. **Delete only what is proven gone.** Sync deletes a copy only if TimeTree marked the event deleted,
-   or if a *complete* (FULL) read of an active calendar no longer contains it, and only inside the
-   30-day window. Copies of paused calendars (access lost), out-of-window copies and marked rows the
-   app doesn't know are left alone. Only explicit user actions (Remove all copies, sign-out with
+   or if a *complete* (FULL) read of an active calendar no longer contains it, or if the event is
+   live but the calendar's filter (0.2.0) excludes it, and only inside the 30-day window. Copies of
+   paused calendars (access lost), out-of-window copies and marked rows the app doesn't know are
+   left alone. Only explicit user actions (Remove all copies, sign-out with
    removal, changing the target) delete every marked row.
 5. **No secrets or personal data in logs, reports or the repo.** Logs carry counts, HTTP status,
    error codes and 8-character uuid prefixes only. Raw API dumps exist only in debug builds and never
@@ -119,7 +120,7 @@ Keep running → Status. `Navigation.kt` holds the Navigation 3 back stack. View
 `AppViewModelFactory` (manual DI from `AppGraph`) and call `UserActions` for multi-step actions such as
 sign-out or a target change, so every screen runs those steps in the same order.
 
-**Storage.** `SyncDb` (SQLite, schema version 2) holds snapshots, mappings, cursors and meta
+**Storage.** `SyncDb` (SQLite, schema version 3) holds snapshots, mappings, cursors and meta
 values. DataStore holds settings and status. Credentials are encrypted into
 `noBackupFilesDir/credentials.enc`. Backups are off for the whole app.
 

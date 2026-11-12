@@ -1,6 +1,7 @@
 package de.tergelius.ttsync.sync
 
 import de.tergelius.ttsync.calendar.CalendarOp
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.mapping.EventMapper
 import de.tergelius.ttsync.mapping.Marker
 import de.tergelius.ttsync.store.CalendarState
@@ -17,9 +18,10 @@ import org.junit.Test
 
 /**
  * Random mixes of TimeTree changes, user edits in the calendar, lost mappings, crashes, provider
- * failures, races between the pre-read and the batch, lost access and passing time. After every
- * step the rows the app did not create must be exactly as they were; at the end two clean FULL runs
- * leave exactly one copy per live event, and the second one writes nothing.
+ * failures, races between the pre-read and the batch, lost access, filter changes and passing
+ * time. After every step the rows the app did not create must be exactly as they were; at the end
+ * two clean FULL runs leave exactly one copy per live event that its calendar's filter includes and
+ * none of the events it excludes, and the second run writes nothing.
  */
 class SyncEngineSafetyTest {
   @Test
@@ -39,9 +41,12 @@ class SyncEngineSafetyTest {
     h.sync()
     repeat(18) { step ->
       val cal = if (random.nextBoolean()) CAL_A else CAL_B
-      val action = random.nextInt(16)
+      val action = random.nextInt(17)
       when (action) {
-        0 -> h.client.put(cal, h.timed("r%03d%028d".format(seed, created++), day = random.nextInt(-45, 45), title = "N"))
+        0 -> {
+          val event = h.timed("r%03d%028d".format(seed, created++), day = random.nextInt(-45, 45), title = "N")
+          h.client.put(cal, event.copy(labelId = listOf(null, 1L, 2L).random(random)))
+        }
         1 -> live(cal).randomOrNull(random)?.let { e ->
           h.client.edit(cal, e.uuid) { it.copy(title = "E$step", startAt = it.startAt + DAY, endAt = it.endAt + DAY) }
         }
@@ -82,6 +87,19 @@ class SyncEngineSafetyTest {
           h.sync()
           h.gateway.onApply = null
         }
+        16 -> {
+          val selected = h.settings.value.sources.map { it.id }
+          val filter =
+            listOf(
+                null,
+                EventFilter(labelIds = setOf(1)),
+                EventFilter(labelIds = setOf(2)),
+                EventFilter(excludeTerms = listOf("e")), // edited titles are "E<step>"
+                EventFilter(includeTerms = listOf("n")),
+              )
+              .random(random)
+          h.setFilter(selected.random(random), filter)
+        }
       }
       try {
         h.assertForeignUntouched()
@@ -99,18 +117,23 @@ class SyncEngineSafetyTest {
 
     val today = Instant.ofEpochMilli(h.now).atZone(h.zone).toLocalDate()
     val windowStart = EventMapper.windowStartMillis(today, h.zone)
-    val active = h.settings.value.sources.map { it.id }.filter { h.store.cursors.get(it)?.state == CalendarState.ACTIVE }
-    val expected =
+    val filters = h.settings.value.sources.associate { it.id to it.activeFilter }
+    val active = filters.keys.filter { h.store.cursors.get(it)?.state == CalendarState.ACTIVE }
+    val (expected, excluded) =
       active
-        .flatMap { h.client.all(it) }
-        .filter { !it.isDeactivated && !it.isBirthday && !it.isMemo }
-        .filter { it.recurrences.isNotEmpty() || maxOf(it.endAt, it.startAt) >= windowStart }
-        .map { it.uuid }
-        .toSet()
+        .flatMap { cal -> h.client.all(cal).map { cal to it } }
+        .filter { (_, e) -> !e.isDeactivated && !e.isBirthday && !e.isMemo }
+        .filter { (_, e) -> e.recurrences.isNotEmpty() || maxOf(e.endAt, e.startAt) >= windowStart }
+        .partition { (cal, e) -> filters[cal]?.matches(e) != false }
+        .let { (inc, exc) -> inc.map { it.second.uuid }.toSet() to exc.map { it.second.uuid }.toSet() }
     val marked = h.gateway.markedRows(TARGET).groupBy { Marker.parse(it.description)!! }
     for (uuid in expected) {
       assertEquals("seed $seed: copies of ${uuid.take(8)}", 1, marked[uuid]?.size ?: 0)
       assertEquals("seed $seed: mapping of ${uuid.take(8)}", marked.getValue(uuid).single().id, h.store.mappings.get(uuid)?.eventId)
+    }
+    for (uuid in excluded) {
+      assertEquals("seed $seed: copies of excluded ${uuid.take(8)}", 0, marked[uuid]?.size ?: 0)
+      assertNull("seed $seed: mapping of excluded ${uuid.take(8)}", h.store.mappings.get(uuid))
     }
   }
 }

@@ -72,13 +72,23 @@ class SqlSyncDatabaseTest {
   fun cursorsKeepNullsAndState() {
     val fresh = SyncCursor(7, null, null, CalendarState.ACTIVE, null)
     val paused =
-      SyncCursor(8, 1234, 5678, CalendarState.PAUSED, """[{"id":1,"name":"x"}]""", lastFullPages = 4)
+      SyncCursor(
+        8,
+        1234,
+        5678,
+        CalendarState.PAUSED,
+        """[{"id":1,"name":"x"}]""",
+        lastFullPages = 4,
+        filterHash = "ab".repeat(32),
+      )
     db.cursors.put(fresh)
     db.cursors.put(paused)
     assertEquals(fresh, db.cursors.get(7))
     assertEquals(listOf(fresh, paused), db.cursors.all())
     db.cursors.put(fresh.copy(highWater = 9))
     assertEquals(9L, db.cursors.get(7)!!.highWater)
+    db.cursors.put(paused.copy(filterHash = null)) // the filter was removed
+    assertNull(db.cursors.get(8)!!.filterHash)
     db.cursors.delete(7)
     assertNull(db.cursors.get(7))
   }
@@ -190,13 +200,72 @@ class SqlSyncDatabaseTest {
       assertEquals(99L, upgraded.mappings.get("u2")!!.writtenAt)
       val columns = old.query("PRAGMA table_info(cursor)") { it.string(1) }
       assertEquals(
-        listOf("tt_cal_id", "high_water", "last_full_at", "state", "labels_json", "last_full_pages"),
+        listOf(
+          "tt_cal_id",
+          "high_water",
+          "last_full_at",
+          "state",
+          "labels_json",
+          "last_full_pages",
+          "filter_hash",
+        ),
         columns,
       )
       assertEquals(SyncSchema.TABLES.toSet(), old.query("SELECT name FROM sqlite_master WHERE type = 'table'") { it.string(0) }.toSet())
       // The upgraded table works like a fresh one.
       upgraded.cursors.put(SyncCursor(7, 42, 1, CalendarState.ACTIVE, null))
       assertEquals(42L, upgraded.cursors.get(7)!!.highWater)
+    } finally {
+      old.close()
+    }
+  }
+
+  @Test
+  fun upgradeFromVersion2AddsTheFilterHashAndForcesNoFullRun() {
+    // Schema 2 as 0.1.x shipped it. Its cursors had no filter, which is what null means, so
+    // nothing about them changes: no FULL run because of the upgrade.
+    val old = JdbcSqlConnection.inMemory()
+    try {
+      old.transaction {
+        V1_CREATE.forEach { old.execute(it) }
+        SyncSchema.MIGRATIONS.getValue(1).forEach { old.execute(it.trimIndent()) }
+        old.execute(
+          "INSERT INTO cursor (tt_cal_id, high_water, last_full_at, state, labels_json, last_full_pages) " +
+            "VALUES (?, ?, ?, ?, ?, ?)",
+          listOf(7L, 1794465807011L, 1794481200000L, "ACTIVE", """[{"id":1,"name":""}]""", 2L),
+        )
+        old.execute(
+          "INSERT INTO mapping (uuid, tt_cal_id, target_cal_id, event_id, spec_hash, end_at, written_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+          listOf("u1", 7L, 15L, 1001L, "h", 5L, 99L),
+        )
+        old.execute("INSERT INTO meta (key, value) VALUES (?, ?)", listOf(MetaKeys.MAPPER_VERSION, "1"))
+      }
+      SyncSchema.upgrade(old, 2, SyncSchema.VERSION)
+      val upgraded = SqlSyncDatabase(old)
+      assertEquals(
+        listOf(
+          SyncCursor(7, 1794465807011L, 1794481200000L, CalendarState.ACTIVE, """[{"id":1,"name":""}]""", 2, null)
+        ),
+        upgraded.cursors.all(),
+      )
+      assertEquals(Mapping("u1", 7, 15, 1001, "h", 5, writtenAt = 99), upgraded.mappings.get("u1"))
+      assertEquals("1", upgraded.meta.get(MetaKeys.MAPPER_VERSION))
+      upgraded.cursors.put(upgraded.cursors.get(7)!!.copy(filterHash = "cd".repeat(32)))
+      assertEquals("cd".repeat(32), upgraded.cursors.get(7)!!.filterHash)
+      // The same columns as a fresh install.
+      val fresh = JdbcSqlConnection.inMemory().also { SyncSchema.create(it) }
+      try {
+        for (table in SyncSchema.TABLES) {
+          assertEquals(
+            table,
+            fresh.query("PRAGMA table_info($table)") { it.string(1) },
+            old.query("PRAGMA table_info($table)") { it.string(1) },
+          )
+        }
+      } finally {
+        fresh.close()
+      }
     } finally {
       old.close()
     }

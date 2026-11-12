@@ -9,6 +9,7 @@ import de.tergelius.ttsync.calendar.GoogleSyncState
 import de.tergelius.ttsync.calendar.MarkedRow
 import de.tergelius.ttsync.calendar.RowCheck
 import de.tergelius.ttsync.calendar.TargetCalendar
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.settings.CredentialStore
 import de.tergelius.ttsync.settings.Credentials
 import de.tergelius.ttsync.settings.Settings
@@ -193,6 +194,14 @@ class FakeEngine(private val calls: Calls, private val settings: FakeSettings? =
 
   override suspend fun dropMappings() {
     calls.add("engine.dropMappings")
+  }
+
+  /** What [filterImpact] answers. */
+  var impact = 0
+
+  override suspend fun filterImpact(ttCalId: Long, filter: EventFilter?): Int {
+    calls.add("engine.filterImpact($ttCalId)")
+    return impact
   }
 }
 

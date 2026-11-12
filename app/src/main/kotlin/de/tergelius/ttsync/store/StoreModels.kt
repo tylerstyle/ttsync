@@ -56,8 +56,8 @@ data class Mapping(
 }
 
 /**
- * `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages)`: per
- * TimeTree calendar.
+ * `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages,
+ * filter_hash)`: per TimeTree calendar.
  */
 data class SyncCursor(
   val ttCalId: Long,
@@ -81,6 +81,12 @@ data class SyncCursor(
    * section 5).
    */
   val lastFullPages: Int? = null,
+  /**
+   * `EventFilter.fingerprint()` of the filter the copies follow, stored once a run's writes for
+   * this calendar succeeded; null for no filter. A selection whose filter has another fingerprint
+   * forces a FULL run ("filter changed"), since only a FULL diffs every event.
+   */
+  val filterHash: String? = null,
 )
 
 /** Stored by [name]; never rename the constants. */

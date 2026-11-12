@@ -84,10 +84,11 @@ four tables don't justify annotation processing. Tink is out too (see section 6)
   `Long.MAX_VALUE` if the series is open-ended or its end is unknown. Every window check uses `end_at`.
   `written_at` is when the app last wrote the row (null if unknown); it dates the upload check
   (section 5, step 1).
-- `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages)`:
+- `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages, filter_hash)`:
   `high_water` is the calendar's high-water mark (section 3, Events); `last_full_pages` is the size of
   its feed at the last FULL, which picks FULL or INCREMENTAL (section 5). Schema 2 replaced schema
-  1's `since`, the server's cursor, which the upgrade drops (null forces one FULL).
+  1's `since`, the server's cursor, which the upgrade drops (null forces one FULL). Schema 3 (0.2.0)
+  adds `filter_hash`, the fingerprint of the filter the copies follow (null: no filter).
 - `meta(key PK, value)`
 
 ## 3. TimeTree client
@@ -142,7 +143,8 @@ release builds it does nothing.
 
 `EventMapper` is pure: (snapshots, labels, target, today) → `Map<uuid, Desired>`, where `Desired` is one of:
 - `Write(spec: EventSpec, endAt: Long)`: the row must exist with exactly this content.
-- `Absent`: the row must not exist. Used for birthdays, memos and events with `deactivated_at` set.
+- `Absent`: the row must not exist. Used for birthdays, memos, events with `deactivated_at` set and
+  (0.2.0) live events that the calendar's filter excludes, which the filter checks last.
 
 Events outside the window (`endAt` before today − 30 days) are not in the map at all, so they are never
 touched.
@@ -151,7 +153,7 @@ touched.
 |---|---|
 | `TITLE` | `title`, or `(TimeTree)` if it is blank |
 | `EVENT_LOCATION` | `location`, or null |
-| `DESCRIPTION` | `note`, then `Label: <name>`, then `URL: <url>`; last line `[ttsync:<uuid>]` |
+| `DESCRIPTION` | `note`, then `Label: <name>` (0.2.0: an unnamed label by the English name of its colour), then `URL: <url>`; last line `[ttsync:<uuid>]` |
 | `DTSTART` | timed: `start_at`; all-day: UTC midnight of the start date |
 | `DTEND` | timed: `max(end_at, start_at)`; all-day: UTC midnight of the inclusive end date + 1 day; recurring: null |
 | `DURATION` | recurring only: `P<seconds>S` for timed events; `P<days>D` for all-day, with `days = DAYS.between(startDate, inclusiveEndDate) + 1` (a one-day event is `P1D`) |
@@ -229,8 +231,8 @@ Bumping the version rewrites every row once.
 
 ## 5. Sync algorithm
 
-`FULL` runs on a calendar's first sync, after a mapper version bump, after the selection changes, and
-on "Full resync". Beyond that, the size of its feed at the last FULL decides (`cursor.last_full_pages`,
+`FULL` runs on a calendar's first sync, after a mapper version bump, after the selection changes,
+after its filter changes (0.2.0, `cursor.filter_hash`), and on "Full resync". Beyond that, the size of its feed at the last FULL decides (`cursor.last_full_pages`,
 the first pass only). Deleted events seem to vanish from the feed instead of coming back as tombstones
 (step 3), so only a FULL sees a deletion:
 - **Small calendar**, at most `SMALL_FEED_PAGES` = 3 pages: every run is FULL. That is a few requests
@@ -294,6 +296,9 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (small feed, pages=1)` 
      the diff brings it up to date with one verified update.
    - Several rows for a uuid that is live and active: keep the lowest `_ID` and delete the others with
      verified deletes.
+   - 0.2.0: an unmapped row of a uuid that is live and in window but excluded by the filter of its
+     active calendar is deleted with a verified delete (leftovers after a reinstall or lost mappings;
+     a mapped one is deleted by the diff).
    - Any other marked row (unknown, dead, paused or out-of-window uuid) is left alone and counted in
      `SyncReport.unmanagedMarked`.
 7. **Apply** with `applyBatch` in chunks of 50. Each chunk's mappings go in one SQLite transaction.
@@ -316,7 +321,8 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (small feed, pages=1)` 
 - **R5.** Every query for our rows is limited to `calendar_id = target`.
 
 Known v1 behaviour (device test): TimeTree's default labels have empty names (the app shows them
-localized), so they add no `Label:` line; only renamed labels do. Adoption rewrites each adopted row
+localized), so in 0.1.x they added no `Label:` line; only renamed labels did. Since 0.2.0 (B3) an
+unnamed label adds the English name of its colour, as TimeTree shows it. Adoption rewrites each adopted row
 once (`spec_hash=""`), which means one upload per row even when nothing changed.
 
 This makes a run idempotent: if nothing changed in TimeTree, it writes nothing. A crash leaves at most
@@ -587,7 +593,7 @@ From the design review ([reviews/design-agy.md](reviews/design-agy.md)), with th
 | Finding | Outcome | Where |
 |---|---|---|
 | BLOCKER-1: `P<n>S` should be `PT<n>S` | Rejected as a blocker. Android's `calendarcommon2` Duration parser skips `T`, and Google's sync writes `P<n>S`. The form is kept and checked on the device. | 4, checklist step 0 |
-| BLOCKER-2: adoption scan deletes paused and old copies | Accepted. The adoption scan only adopts. Sync deletes only in the diff, and only for mapped uuids of active calendars that are `Absent`, or missing from a complete fetch, and in window. Duplicates are deleted only for live, active uuids. | 5 (steps 5–6), E11, E13, E14 |
+| BLOCKER-2: adoption scan deletes paused and old copies | Accepted. The adoption scan only adopts. Sync deletes only in the diff, and only for mapped uuids of active calendars that are `Absent`, or missing from a complete fetch, and in window. Duplicates are deleted only for live, active uuids. Changed in 0.2.0 by the owner: the scan also deletes unmapped rows of live, in-window events that an active calendar's filter excludes (step 6). | 5 (steps 5–6), E11, E13, E14 |
 | BLOCKER-3: `mapping` has no end date | Accepted. `mapping.end_at` was added (`tt_cal_id` was already there), and every window check uses it. | 2, 4, 5 |
 | BLOCKER-4: nearest-instance heuristic; tombstones ignored | Accepted. No heuristic: native EXDATE first, then an exact match by the original start if the API provides one, otherwise nothing and a count. Tombstones go through the resolver. The final rule and lib-recur are **decided by fixtures**. | 2, 4, 12 (phase 3) |
 | SHOULD-FIX-1: no first sync after setup | Accepted. Confirming the target enqueues a FULL `ttsync-now`. | 7, 9 |

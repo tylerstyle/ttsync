@@ -124,7 +124,8 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
   }
 
   private inner class Cursors : CursorStore {
-    private val columns = "tt_cal_id, high_water, last_full_at, state, labels_json, last_full_pages"
+    private val columns =
+      "tt_cal_id, high_water, last_full_at, state, labels_json, last_full_pages, filter_hash"
 
     private fun read(row: SqlRow) =
       SyncCursor(
@@ -134,6 +135,7 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
         state = stateOf(row.string(3)),
         labelsJson = row.stringOrNull(4),
         lastFullPages = row.longOrNull(5)?.toInt(),
+        filterHash = row.stringOrNull(6),
       )
 
     override fun get(ttCalId: Long): SyncCursor? =
@@ -149,7 +151,7 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
 
     override fun put(cursor: SyncCursor) {
       sql.execute(
-        "INSERT OR REPLACE INTO ${SyncSchema.CURSOR} ($columns) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO ${SyncSchema.CURSOR} ($columns) VALUES (?, ?, ?, ?, ?, ?, ?)",
         listOf(
           cursor.ttCalId,
           cursor.highWater,
@@ -157,6 +159,7 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
           cursor.state.name,
           cursor.labelsJson,
           cursor.lastFullPages?.toLong(),
+          cursor.filterHash,
         ),
       )
     }

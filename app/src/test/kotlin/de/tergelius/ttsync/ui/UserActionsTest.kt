@@ -1,5 +1,6 @@
 package de.tergelius.ttsync.ui
 
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.settings.Settings
 import de.tergelius.ttsync.settings.SetupStep
 import de.tergelius.ttsync.settings.SourceCalendar
@@ -18,6 +19,7 @@ import de.tergelius.ttsync.ui.UiTestGraph.Companion.target
 import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -110,6 +112,46 @@ class UserActionsTest {
       ),
       g.calls.log,
     )
+  }
+
+  @Test
+  fun aChangedFilterStartsAFullSyncAndKeepsEveryCalendar() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    val filtered = family.copy(filter = EventFilter(labelIds = setOf(3)))
+    val change = g.actions.sourceChange(listOf(filtered, football))
+    assertEquals(listOf(filtered), change.filterChanged)
+    assertFalse(change.removesCopies)
+
+    g.actions.saveSources(listOf(filtered, football))
+    assertEquals(listOf("settings.setSources([1, 2])", "scheduler.runNow(full=true, SETUP)"), g.calls.log)
+    assertEquals(listOf(filtered, football), g.settings.flow.value.sources)
+  }
+
+  @Test
+  fun anEquivalentFilterStartsNoSync() = runTest {
+    val stored = family.copy(filter = EventFilter(includeTerms = listOf("Training", "gym")))
+    val g = UiTestGraph(settings = configured.copy(sources = listOf(stored, football)), credentials = SIGNED_IN)
+    val same = family.copy(filter = EventFilter(includeTerms = listOf(" gym", "Training")))
+    // An empty filter is no filter.
+    val none = football.copy(filter = EventFilter(excludeTerms = listOf(" ")))
+    assertTrue(g.actions.sourceChange(listOf(same, none)).filterChanged.isEmpty())
+    g.actions.saveSources(listOf(same, none))
+    assertEquals(listOf("settings.setSources([1, 2])"), g.calls.log)
+  }
+
+  @Test
+  fun aFilterWithoutTargetOnlySavesTheSelection() = runTest {
+    val g = UiTestGraph(settings = Settings(sources = listOf(family)), credentials = SIGNED_IN)
+    g.actions.saveSources(listOf(family.copy(filter = EventFilter(labelIds = setOf(3)))))
+    assertEquals(listOf("settings.setSources([1])"), g.calls.log)
+  }
+
+  @Test
+  fun filterImpactAsksTheEngine() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.engine.impact = 7
+    assertEquals(7, g.actions.filterImpact(1, EventFilter(labelIds = setOf(3))))
+    assertEquals(listOf("engine.filterImpact(1)"), g.calls.log)
   }
 
   @Test
