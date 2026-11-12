@@ -22,6 +22,31 @@ class TtFixtureDecodingTest {
   }
 
   @Test
+  fun calendarsEmbedLabelsAndMembers() {
+    val calendar =
+      TtJson.decodeFromString(TtCalendarsResponse.serializer(), fixture("calendars.json")).calendars.single()
+    // The same labels as GET /calendar/{id}/labels, in TimeTree's default colours.
+    assertEquals((1L..10L).toList(), calendar.labels.map { it.id })
+    val first = calendar.labels.first()
+    assertEquals(0x2ECC87L, first.color)
+    assertEquals(0x2ECC87L, first.defaultColor)
+    assertEquals(1, first.order)
+    assertEquals(
+      TtJson.decodeFromString(TtLabelsResponse.serializer(), fixture("labels.json")).labels,
+      calendar.labels,
+    )
+
+    val member = calendar.users.single()
+    assertEquals(9100001L, member.userId)
+    assertEquals("Name 5", member.name)
+    assertTrue(member.isActive)
+    assertEquals(1, member.role)
+    // Names and user ids stay out of logs.
+    assertFalse(member.toString().contains("Name 5") || member.toString().contains("9100001"))
+    assertFalse(calendar.toString().contains("Name"))
+  }
+
+  @Test
   fun labelsComeFromCalendarLabels() {
     val labels = TtJson.decodeFromString(TtLabelsResponse.serializer(), fixture("labels.json")).labels
     assertEquals(10, labels.size)
@@ -61,6 +86,9 @@ class TtFixtureDecodingTest {
     val allDay = events.single { it.allDay }
     assertEquals("UTC", allDay.startTimezone)
     assertNull(allDay.note)
+
+    // Attendees and author are the members' user ids.
+    assertTrue(events.all { it.attendees == listOf(9100001L) && it.authorId == 9100001L })
   }
 
   @Test

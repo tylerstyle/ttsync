@@ -32,18 +32,54 @@ val TtJson: Json = Json {
 @Serializable
 data class TtCalendarsResponse(val calendars: List<TtCalendar>)
 
-/** One TimeTree calendar the account can see. Its [id] is what every other endpoint uses. */
+/**
+ * One TimeTree calendar the account can see. Its [id] is what every other endpoint uses.
+ *
+ * [labels] and [users] come embedded in the same response (no extra request) and are for the
+ * filter screen: the labels are the same objects as `GET /calendar/{id}/labels` returns, and
+ * [users] are the calendar's members ("Members" in TimeTree), whose ids appear in
+ * [TtEvent.attendees]. Both decode leniently ([LenientListSerializer]), so a surprise there never
+ * fails the calendar list.
+ */
 @Serializable
 data class TtCalendar(
   val id: Long,
   val name: String? = null,
   @SerialName("deactivated_at") val deactivatedAt: Long? = null,
+  @SerialName("calendar_labels")
+  @Serializable(with = LenientLabelList::class)
+  val labels: List<TtLabel> = emptyList(),
+  @SerialName("calendar_users")
+  @Serializable(with = LenientUserList::class)
+  val users: List<TtCalendarUser> = emptyList(),
 ) {
   /** A deactivated calendar counts as lost access ([TtError.AccessLost]). */
   val isActive: Boolean
     get() = deactivatedAt == null
 
-  override fun toString(): String = "TtCalendar(id=$id, active=$isActive)"
+  override fun toString(): String =
+    "TtCalendar(id=$id, active=$isActive, labels=${labels.size}, users=${users.size})"
+}
+
+/**
+ * A member of a calendar (`calendar_users`). [userId] is what [TtEvent.attendees] and
+ * [TtEvent.authorId] refer to. A member who left has [deactivatedAt] set. [role] is TimeTree's
+ * code (1 for the owner in the dumps); it is not interpreted.
+ */
+@Serializable
+data class TtCalendarUser(
+  @SerialName("user_id") val userId: Long,
+  val name: String? = null,
+  @SerialName("deactivated_at")
+  @Serializable(with = LenientLong::class)
+  val deactivatedAt: Long? = null,
+  @Serializable(with = LenientInt::class) val role: Int? = null,
+) {
+  val isActive: Boolean
+    get() = deactivatedAt == null
+
+  /** Redacted: names and user ids are personal data. */
+  override fun toString(): String = "TtCalendarUser(<redacted>, active=$isActive)"
 }
 
 /**
@@ -57,9 +93,25 @@ data class TtLabelsResponse(
   @JsonNames("calendar_labels") val labels: List<TtLabel> = emptyList(),
 )
 
-/** A label of one calendar. Only the name is used (`Label: <name>` in the description). */
+/**
+ * A label of one calendar (ids 1–10 in the dumps). Filters refer to labels by [id] only, never by
+ * name: users rename labels, and renaming changes only [name] (device check 2026-11-12).
+ *
+ * TimeTree shows an unnamed label (`name: ""`) by the name of its [color], so does the app
+ * (`mapping.LabelNames`). Colours are RGB ints (`0x2ECC87`); a label can be recoloured, so [color]
+ * may differ from [defaultColor]. [order] is the display order, which the user can change. The
+ * three are null in labels cached by 0.1.x (`cursor.labels_json`) and decode leniently.
+ */
 @Serializable
-data class TtLabel(val id: Long, val name: String? = null) {
+data class TtLabel(
+  val id: Long,
+  val name: String? = null,
+  @Serializable(with = LenientLong::class) val color: Long? = null,
+  @SerialName("default_color")
+  @Serializable(with = LenientLong::class)
+  val defaultColor: Long? = null,
+  @Serializable(with = LenientInt::class) val order: Int? = null,
+) {
   override fun toString(): String = "TtLabel(id=$id)"
 }
 
@@ -114,6 +166,15 @@ data class TtEvent(
   @SerialName("deactivated_at") val deactivatedAt: Long? = null,
   @SerialName("updated_at") val updatedAt: Long,
   @SerialName("created_at") val createdAt: Long? = null,
+  /**
+   * User ids of the event's attendees ("Attendees" in TimeTree), matching
+   * [TtCalendarUser.userId]. Lenient: ids that are not numbers are dropped, never the event.
+   */
+  @Serializable(with = LenientLongList::class) val attendees: List<Long> = emptyList(),
+  /** User id of whoever created the event; null if unknown. Lenient like [attendees]. */
+  @SerialName("author_id")
+  @Serializable(with = LenientLong::class)
+  val authorId: Long? = null,
 ) {
   val isBirthday: Boolean
     get() = type == TYPE_BIRTHDAY
