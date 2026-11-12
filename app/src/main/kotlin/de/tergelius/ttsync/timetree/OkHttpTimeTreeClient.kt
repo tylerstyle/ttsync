@@ -13,7 +13,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import okhttp3.Call
 import okhttp3.Callback
@@ -107,54 +106,15 @@ class OkHttpTimeTreeClient(
       decodeTt("labels") { TtJson.decodeFromString(TtLabelsResponse.serializer(), body) }.labels
     }
 
-  override suspend fun events(calendarId: Long, since: Long?): EventsResult {
-    val byUuid = LinkedHashMap<String, FetchedEvent>()
-    val skippedUuids = LinkedHashSet<String>()
-    var skippedWithoutUuid = 0
-    val requested = HashSet<Long>()
-    var cursor = since
-    var pages = 0
+  override suspend fun events(calendarId: Long, stopAt: Long?): EventsResult {
     val budget = runBudget
-    while (true) {
-      if (cursor != null) requested += cursor
-      val page =
-        dataCall(Endpoint.Events(calendarId, cursor), budget, dump = true) { body ->
+    val feed =
+      EventFeed(calendarId, maxPages, log) { since ->
+        dataCall(Endpoint.Events(calendarId, since), budget, dump = true) { body ->
           decodeTt("events page") { TtJson.decodeFromString(TtEventsPage.serializer(), body) }
         }
-      pages++
-      for (json in page.events) {
-        // The last occurrence of a uuid wins, at its own position, even if it is malformed.
-        val event =
-          try {
-            TtEvent.fromJson(json)
-          } catch (e: TtError.ApiChanged) {
-            val uuid = (json["uuid"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
-            if (uuid == null) skippedWithoutUuid++
-            else {
-              byUuid.remove(uuid)
-              skippedUuids += uuid
-            }
-            log.w(
-              "timetree: calendar $calendarId: skipped malformed event " +
-                (uuid?.let(TtLog::short) ?: "without uuid")
-            )
-            continue
-          }
-        skippedUuids -= event.uuid
-        byUuid.remove(event.uuid)
-        byUuid[event.uuid] = FetchedEvent(event, json)
       }
-      if (!page.chunk) {
-        val skipped = skippedUuids.size + skippedWithoutUuid
-        log.d("timetree: calendar $calendarId: ${byUuid.size} events in $pages pages, $skipped skipped")
-        return EventsResult(byUuid.values.toList(), page.since, pages, skippedUuids, skipped)
-      }
-      if (page.since in requested) {
-        throw TtError.ApiChanged("events cursor repeated after $pages pages")
-      }
-      if (pages >= maxPages) throw TtError.ApiChanged("more than $maxPages event pages")
-      cursor = page.since // may be lower than the previous one
-    }
+    return feed.read(stopAt)
   }
 
   /**
@@ -350,9 +310,9 @@ class OkHttpTimeTreeClient(
         base.newBuilder().addPathSegments("calendar/$calendarId/labels").build()
     }
 
-    /** `GET /calendar/{id}/events/sync[?since=N]` */
+    /** `GET /calendar/{id}/events/sync[?since=N]`; no `since` is the top of the feed. */
     class Events(id: Long, private val since: Long?) : Endpoint("events", id) {
-      override val dumpName = "calendar_${id}_events_" + (since?.let { "since_$it" } ?: "full")
+      override val dumpName = "calendar_${id}_events_" + (since?.let { "since_$it" } ?: "top")
 
       override fun url(base: HttpUrl): HttpUrl =
         base

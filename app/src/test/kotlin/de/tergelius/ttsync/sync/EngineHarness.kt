@@ -22,12 +22,14 @@ import de.tergelius.ttsync.settings.SyncStatus
 import de.tergelius.ttsync.store.JdbcSqlConnection
 import de.tergelius.ttsync.store.MappingStore
 import de.tergelius.ttsync.store.SyncDatabase
+import de.tergelius.ttsync.timetree.EventFeed
 import de.tergelius.ttsync.timetree.EventsResult
-import de.tergelius.ttsync.timetree.FetchedEvent
+import de.tergelius.ttsync.timetree.TimeTreeApi
 import de.tergelius.ttsync.timetree.TimeTreeClient
 import de.tergelius.ttsync.timetree.TtCalendar
 import de.tergelius.ttsync.timetree.TtError
 import de.tergelius.ttsync.timetree.TtEvent
+import de.tergelius.ttsync.timetree.TtEventsPage
 import de.tergelius.ttsync.timetree.TtJson
 import de.tergelius.ttsync.timetree.TtLabel
 import java.time.Instant
@@ -36,6 +38,8 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -215,32 +219,52 @@ class EngineHarness {
   // ---------------------------------------------------------------------------------------------
 
   /**
-   * TimeTree's sync endpoint in memory. Every change gets a new `updated_at`; `events(since)`
-   * returns what changed after `since`, and a FULL (`since == null`) returns everything, deleted
-   * events included unless [fullOmitsTombstones].
+   * TimeTree's sync endpoint in memory, paging like the real API (on-device test, 2026-11-12): the
+   * feed is ordered by `updated_at`, newest change first, [pageSize] events a page. A page's
+   * `since` is its oldest `updated_at` − 1 and asks for the next *older* page; `chunk == false`
+   * marks the oldest one. Deleted events stay in the feed as tombstones. The paging rules are the
+   * real client's ([EventFeed]); only HTTP is replaced.
+   *
+   * Every change gets a new `updated_at` from TimeTree's own [clock], [step] apart.
    */
   class FakeClient : TimeTreeClient {
     val calendars = mutableListOf<TtCalendar>()
     val labels = mutableMapOf<Long, List<TtLabel>>()
     private val events = mutableMapOf<Long, LinkedHashMap<String, TtEvent>>()
-    private var clock = 1_000L
 
-    /** Every request, e.g. `calendars`, `labels:1`, `events:1:null`. */
+    /** TimeTree's clock: the `updated_at` of the latest change. */
+    var clock = 1_794_400_000_000L
+
+    /** Between two changes; more than [TimeTreeApi.FEED_OVERLAP], so incremental reads stop early. */
+    var step = 10 * 60_000L
+
+    /**
+     * 2: calendar A's 7 events make 4 pages, more than [DefaultSyncEngine.SMALL_FEED_PAGES], so
+     * runs between FULLs are INCREMENTAL unless a test makes the feed small.
+     */
+    var pageSize = 2
+
+    /** Every request, e.g. `calendars`, `labels:1`, `events:1:null` (one per read, not per page). */
     val requests = mutableListOf<String>()
+
+    /** Every page request of the events reads, e.g. `1:top`, `1:since=1794400599999`. */
+    val pageRequests = mutableListOf<String>()
 
     /** Return a TtError to make that request fail. */
     var fail: ((String) -> TtError?)? = null
-    var fullOmitsTombstones = false
 
-    /** Subtracted from the returned `since` (the real API may return a lower one). */
-    var sinceLag = 0L
+    /** Called before each page of an events read is served, with its number (from 1). */
+    var beforePage: ((Int) -> Unit)? = null
 
-    /** Simulates events that did not decode: left out of the result and reported. */
+    /** Simulates events that do not decode (live events without `start_at`). */
     var skipped: Set<String> = emptySet()
+
+    /** That many undecodable entries without a uuid at the top of the feed. */
     var skippedWithoutUuid = 0
 
     fun put(calendarId: Long, event: TtEvent) {
-      events.getOrPut(calendarId) { LinkedHashMap() }[event.uuid] = event.copy(updatedAt = ++clock)
+      clock += step
+      events.getOrPut(calendarId) { LinkedHashMap() }[event.uuid] = event.copy(updatedAt = clock)
     }
 
     fun edit(calendarId: Long, uuid: String, change: (TtEvent) -> TtEvent) =
@@ -249,7 +273,7 @@ class EngineHarness {
     /** Deleted in TimeTree: a tombstone. [unknownTimes] sends start/end 0 like real tombstones may. */
     fun deactivate(calendarId: Long, uuid: String, unknownTimes: Boolean = false) =
       edit(calendarId, uuid) {
-        val dead = it.copy(deactivatedAt = clock + 1)
+        val dead = it.copy(deactivatedAt = clock + step)
         if (unknownTimes) dead.copy(startAt = 0, endAt = 0) else dead
       }
 
@@ -261,6 +285,9 @@ class EngineHarness {
     fun event(calendarId: Long, uuid: String): TtEvent = events.getValue(calendarId).getValue(uuid)
 
     fun all(calendarId: Long): List<TtEvent> = events[calendarId].orEmpty().values.toList()
+
+    /** The newest change in [calendarId]'s feed: what a complete fetch stores as high-water mark. */
+    fun newestChange(calendarId: Long): Long = all(calendarId).maxOf { it.changedAt }
 
     private fun record(request: String) {
       requests += request
@@ -283,20 +310,34 @@ class EngineHarness {
       return labels[calendarId].orEmpty()
     }
 
-    override suspend fun events(calendarId: Long, since: Long?): EventsResult {
-      record("events:$calendarId:$since")
-      val all = events[calendarId].orEmpty().values
-      val list =
-        if (since == null) all.filter { !fullOmitsTombstones || !it.isDeactivated }
-        else all.filter { it.updatedAt > since }
-      val visible = list.filter { it.uuid !in skipped }
-      return EventsResult(
-        events = visible.map { FetchedEvent(it, TtJson.encodeToJsonElement(TtEvent.serializer(), it).jsonObject) },
-        since = maxOf(all.maxOfOrNull { it.updatedAt } ?: 0, since ?: 0) - sinceLag,
-        pages = 1,
-        skippedUuids = list.map { it.uuid }.filter { it in skipped }.toSet(),
-        skippedMalformed = list.count { it.uuid in skipped } + skippedWithoutUuid,
-      )
+    override suspend fun events(calendarId: Long, stopAt: Long?): EventsResult {
+      record("events:$calendarId:$stopAt")
+      var page = 0
+      val feed =
+        EventFeed(calendarId, TimeTreeApi.MAX_PAGES, TtLog.None) { since ->
+          beforePage?.invoke(++page)
+          pageRequests += "$calendarId:" + (since?.let { "since=$it" } ?: "top")
+          serve(calendarId, since)
+        }
+      return feed.read(stopAt)
+    }
+
+    /** One page as the server sends it. */
+    private fun serve(calendarId: Long, since: Long?): TtEventsPage {
+      val feed = all(calendarId).sortedByDescending { it.updatedAt }
+      val remaining = if (since == null) feed else feed.filter { it.updatedAt <= since }
+      val page = remaining.take(pageSize)
+      val json = page.map(::toJson).toMutableList()
+      if (since == null) {
+        repeat(skippedWithoutUuid) { json.add(0, JsonObject(mapOf("title" to JsonPrimitive("?")))) }
+      }
+      val oldest = page.lastOrNull()?.updatedAt ?: ((since ?: 0L) + 1)
+      return TtEventsPage(json, chunk = remaining.size > pageSize, since = oldest - 1)
+    }
+
+    private fun toJson(event: TtEvent): JsonObject {
+      val json = TtJson.encodeToJsonElement(TtEvent.serializer(), event).jsonObject
+      return if (event.uuid in skipped) JsonObject(json - "start_at") else json
     }
   }
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import de.tergelius.ttsync.calendar.CalendarGateway
 import de.tergelius.ttsync.calendar.GoogleSyncState
 import de.tergelius.ttsync.settings.SettingsRepository
+import de.tergelius.ttsync.settings.StatusRepository
 import de.tergelius.ttsync.ui.DeviceChecks
 import de.tergelius.ttsync.ui.DeviceState
 import de.tergelius.ttsync.ui.UnusedAppRestrictions
@@ -44,16 +45,22 @@ data class CheckItem(val id: CheckId, val state: CheckState)
 object Checklist {
   /**
    * Builds the checklist. [googleSync] is null when it cannot be read (no target or no calendar
-   * permission). Autostart appears only on the Xiaomi family, "Pause app activity if unused" only
-   * where the feature exists, the standby bucket only on API 28+.
+   * permission). Google sync is a problem when a switch is known to be off, or when the last run
+   * found [notUploaded] copies still waiting for upload; an account switch Android hides from the
+   * app does not count (device test B2). Autostart appears only on the Xiaomi family, "Pause app
+   * activity if unused" only where the feature exists, the standby bucket only on API 28+.
    */
-  fun build(device: DeviceState, googleSync: GoogleSyncState?): List<CheckItem> = buildList {
+  fun build(
+    device: DeviceState,
+    googleSync: GoogleSyncState?,
+    notUploaded: Int = 0,
+  ): List<CheckItem> = buildList {
     add(CheckItem(CheckId.CALENDAR_PERMISSION, ok(device.calendarPermission)))
     add(CheckItem(CheckId.NOTIFICATIONS, ok(device.notificationsEnabled)))
     add(
       CheckItem(
         CheckId.GOOGLE_SYNC,
-        if (googleSync == null) CheckState.UNKNOWN else ok(googleSync.uploads),
+        if (googleSync == null) CheckState.UNKNOWN else ok(googleSync.uploads && notUploaded == 0),
       )
     )
     add(CheckItem(CheckId.BATTERY, ok(device.batteryUnrestricted)))
@@ -77,6 +84,8 @@ data class ReliabilityUiState(
   val device: DeviceState? = null,
   val googleSync: GoogleSyncState? = null,
   val items: List<CheckItem> = emptyList(),
+  /** Copies the last run found still waiting for Google's sync (`SyncReport.notUploaded`). */
+  val notUploaded: Int = 0,
 ) {
   val problems: Int
     get() = items.count { it.state == CheckState.PROBLEM }
@@ -87,6 +96,7 @@ class ReliabilityViewModel(
   private val deviceChecks: DeviceChecks,
   private val settings: SettingsRepository,
   private val gateway: CalendarGateway,
+  private val status: StatusRepository,
 ) : ViewModel() {
   private val _state = MutableStateFlow(ReliabilityUiState())
   val state: StateFlow<ReliabilityUiState> = _state.asStateFlow()
@@ -102,11 +112,20 @@ class ReliabilityViewModel(
           DeviceState()
         }
       val googleSync = googleSync(device)
+      val notUploaded =
+        try {
+          status.current().lastReport?.notUploaded ?: 0
+        } catch (e: CancellationException) {
+          throw e
+        } catch (_: Exception) {
+          0
+        }
       _state.update {
         it.copy(
           device = device,
           googleSync = googleSync,
-          items = Checklist.build(device, googleSync),
+          items = Checklist.build(device, googleSync, notUploaded),
+          notUploaded = notUploaded,
         )
       }
     }

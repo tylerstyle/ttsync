@@ -31,6 +31,22 @@ class NavigationTest {
   }
 
   @Test
+  fun signingInAgainFromSourcesDuringSetupReturnsToSources() {
+    // Phase 5 review, SHOULD-FIX-3.
+    val (stack, nav) = navigator(SourcesRoute(setup = true), LoginRoute(reauth = true))
+    nav.onSetupProgress(LoginRoute(reauth = true), SetupStep.SOURCES)
+    assertEquals(listOf<NavKey>(SourcesRoute(setup = true)), stack)
+  }
+
+  @Test
+  fun signingInAgainFromSourcesOpenedInSettingsStaysThere() {
+    val (stack, nav) =
+      navigator(StatusRoute, SettingsRoute, SourcesRoute(setup = false), LoginRoute(reauth = true))
+    nav.onSetupProgress(LoginRoute(reauth = true), SetupStep.DONE)
+    assertEquals(listOf(StatusRoute, SettingsRoute, SourcesRoute(setup = false)), stack)
+  }
+
+  @Test
   fun editsFromSettingsGoBackToSettings() {
     val (stack, nav) = navigator(StatusRoute, SettingsRoute, TargetRoute(setup = false))
     nav.onSetupProgress(TargetRoute(setup = false), SetupStep.DONE)

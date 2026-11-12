@@ -136,6 +136,11 @@
     <string name="check_google_sync_master_off">Die automatische Synchronisierung ist für alle Konten aus. Die Kopien bleiben auf diesem Telefon, bis sie wieder an ist.</string>
     <string name="check_google_sync_account_off">Die Kalendersynchronisierung ist für dieses Google-Konto aus. Die Kopien bleiben auf diesem Telefon, bis sie wieder an ist.</string>
     <string name="check_google_sync_unknown">Wird geprüft, sobald ein Zielkalender gewählt und der Kalenderzugriff erlaubt ist.</string>
+    <string name="check_google_sync_unverifiable">Die automatische Synchronisierung ist an. Android zeigt Apps den Schalter für die Kalendersynchronisierung eines Google-Kontos nicht, daher prüft die App, ob ihre Kopien bei Google ankommen.</string>
+    <plurals name="check_google_sync_not_uploaded">
+        <item quantity="one">%d Kopie ist 30 Minuten nach dem Schreiben noch nicht bei Google angekommen. Prüfe, ob die Kalendersynchronisierung für dieses Google-Konto an ist.</item>
+        <item quantity="other">%d Kopien sind 30 Minuten nach dem Schreiben noch nicht bei Google angekommen. Prüfe, ob die Kalendersynchronisierung für dieses Google-Konto an ist.</item>
+    </plurals>
     <string name="check_battery_title">Uneingeschränkte Akkunutzung</string>
     <string name="check_battery_ok">Erlaubt. Android lässt die App im Hintergrund synchronisieren.</string>
     <string name="check_battery_problem">Eingeschränkt. Android kann Synchronisierungen im Hintergrund verzögern oder auslassen. Erlaube der App eine uneingeschränkte Akkunutzung.</string>
@@ -197,6 +202,13 @@
     <string name="status_warnings_title">Warnungen</string>
     <string name="status_warning_google_sync">Google-Synchronisierung ist aus, die Kopien bleiben auf diesem Telefon</string>
     <string name="status_warning_google_sync_text">Schalte die automatische Synchronisierung und die Kalendersynchronisierung für das Google-Konto ein, damit die Kopien hochgeladen werden.</string>
+    <plurals name="status_warning_not_uploaded">
+        <item quantity="one">%d Änderung noch nicht zu Google hochgeladen</item>
+        <item quantity="other">%d Änderungen noch nicht zu Google hochgeladen</item>
+    </plurals>
+    <string name="status_warning_not_uploaded_text">Kopien, die vor mehr als 30 Minuten geschrieben wurden, warten noch auf die Google-Synchronisierung. Prüfe, ob die automatische Synchronisierung und die Kalendersynchronisierung für das Google-Konto an sind.</string>
+    <!-- %1$d: Sekunden seit der letzten erfolgreichen Synchronisierung -->
+    <string name="status_synced_recently">Vor %1$d s synchronisiert, nichts zu tun</string>
     <string name="status_warning_battery">Akkunutzung ist eingeschränkt</string>
     <string name="status_warning_notifications">Benachrichtigungen sind aus</string>
     <string name="status_warning_paused_title">Kein Zugriff auf einige TimeTree-Kalender</string>

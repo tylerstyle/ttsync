@@ -19,7 +19,8 @@ v1 does:
 - Handle timed, all-day, multi-day and recurring events, edited occurrences and deletions. Skip
   birthdays (`type 1`) and memos (`category 2`).
 - Copy only events that end on or after today − 30 days. Older events are never written or touched.
-- Sync every hour, and reconcile fully once a day. "Sync now" runs at any time.
+- Sync every hour. Reconcile fully on every run for a small calendar, otherwise at least every 6 h
+  (section 5). "Sync now" runs at any time.
 - Show a status screen, a failure notification and a reliability checklist. Sign-out can remove the copies.
 - English (default) and German.
 
@@ -70,10 +71,15 @@ four tables don't justify annotation processing. Tink is out too (see section 6)
 `SyncDb` tables:
 - `snapshot(uuid PK, tt_cal_id, updated_at, deactivated, json)`: live events, plus tombstones of
   deactivated occurrences that have a `recurring_uuid` (section 4, edited occurrences).
-- `mapping(uuid PK, tt_cal_id, target_cal_id, event_id, spec_hash, end_at)`: `end_at` is the last
-  written end of the copy in UTC ms. For a series it is the end of its last instance, or `Long.MAX_VALUE`
-  if the series is open-ended or its end is unknown. Every window check uses `end_at`.
-- `cursor(tt_cal_id PK, since, last_full_at, state, labels_json)`
+- `mapping(uuid PK, tt_cal_id, target_cal_id, event_id, spec_hash, end_at, written_at)`: `end_at` is
+  the last written end of the copy in UTC ms. For a series it is the end of its last instance, or
+  `Long.MAX_VALUE` if the series is open-ended or its end is unknown. Every window check uses `end_at`.
+  `written_at` is when the app last wrote the row (null if unknown); it dates the upload check
+  (section 5, step 1).
+- `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages)`:
+  `high_water` is the calendar's high-water mark (section 3, Events); `last_full_pages` is the size of
+  its feed at the last FULL, which picks FULL or INCREMENTAL (section 5). Schema 2 replaced schema
+  1's `since`, the server's cursor, which the upgrade drops (null forces one FULL).
 - `meta(key PK, value)`
 
 ## 3. TimeTree client
@@ -88,14 +94,28 @@ All requests go to `https://timetreeapp.com/api/v1` with the headers `X-Timetree
 - **Calendars.** `GET /calendars?since=0` on every run. This also shows when access is gone.
 - **Labels.** `GET /calendar/{id}/labels`, cached and refreshed on a full reconcile or when a label is
   unknown.
-- **Events.** `GET /calendar/{id}/events/sync[?since=N]`.
-  - Follow `since` while `chunk == true`. It may decrease.
-  - Fail with `ApiChanged` if a cursor repeats or after 500 pages.
-  - Never return partial lists.
+- **Events.** `GET /calendar/{id}/events/sync[?since=N]`. Device test 2026-11-12: the feed is ordered
+  by `updated_at`, **newest change first**, and pages *backwards*. A request without `since` returns
+  the newest page; its `since` is the page's oldest `updated_at` − 1 and asks for the next older page;
+  `chunk == false` marks the oldest page. `?since=<last since>` returns nothing new, so `since` is never
+  stored. Every read starts at the top of the feed:
+  - FULL reads every page. If that took more than one page, it reads the top once more, down to 2 min
+    below the newest change it saw, so an event edited during the read (it moves to the top, possibly
+    out of a page not read yet) does not look deleted.
+  - INCREMENTAL stops after the first page that holds an event with `updated_at` ≤ the calendar's
+    high-water mark − 2 min. The high-water mark is the largest `max(updated_at, deactivated_at)` of all
+    events of the complete fetches so far (0 after a FULL of an empty calendar). Re-reading a few known
+    events is harmless: the hash diff writes nothing for them. If the feed turns out not to be ordered
+    newest first, the read goes on to the end.
+  - A uuid seen twice keeps its newest version. Fail with `ApiChanged` if a cursor repeats or after 500
+    pages. Never return partial lists.
 - **Re-login.** Only after a 401 on a data call or a 403 on `/calendars`. At most one login and one
   retry per run.
-- **Pacing.** At least 1 s between requests, and "Sync now" waits 60 s after a run. An hourly run is
-  1 request plus 1 per calendar. Timeouts: connect 15 s, read 30 s, call 60 s.
+- **Pacing.** At least 1 s between requests. "Sync now" within 60 s of a successful run starts no run
+  (Status says "Synced N s ago") instead of a delayed one, which can wait half an hour while the app
+  is in the background (device test F4). An hourly run is 1 request plus, per calendar, the labels and
+  its pages when it is small (a FULL, section 5), or 1 page when it is larger (more only after many
+  changes). Timeouts: connect 15 s, read 30 s, call 60 s.
 
 | Signal | Error | Reaction |
 |---|---|---|
@@ -201,8 +221,18 @@ Bumping the version rewrites every row once.
 
 ## 5. Sync algorithm
 
-`FULL` runs on a calendar's first sync, every 24 h, after a mapper version bump, after the selection
-changes, and on "Full resync". Every other run is `INCREMENTAL`.
+`FULL` runs on a calendar's first sync, after a mapper version bump, after the selection changes, and
+on "Full resync". Beyond that, the size of its feed at the last FULL decides (`cursor.last_full_pages`,
+the first pass only). Deleted events seem to vanish from the feed instead of coming back as tombstones
+(step 3), so only a FULL sees a deletion:
+- **Small calendar**, at most `SMALL_FEED_PAGES` = 3 pages: every run is FULL. That is a few requests
+  per hour, and deletions reach Google within the sync interval, like every other change.
+- **Larger calendar**: runs are `INCREMENTAL`, with a FULL at least every `FULL_INTERVAL` = 6 h. A
+  deletion takes up to 6 h.
+
+The engine logs the mode and why, e.g. `calendar 1: FULL (small feed, pages=1)` or
+`calendar 1: INCREMENTAL (last FULL 42 min ago, pages=5)`. Both thresholds are constants in
+`DefaultSyncEngine`.
 
 1. **Preconditions.**
    - The app has calendar permission.
@@ -217,12 +247,24 @@ changes, and on "Full resync". Every other run is `INCREMENTAL`.
    Also check `ContentResolver.getMasterSyncAutomatically()` and
    `getSyncAutomatically(account, "com.android.calendar")`. If either is off, the run continues: rows are
    written and upload once sync is back on. Status shows the warning "Google sync is off, copies stay on
-   this phone", and the checklist marks the item.
+   this phone", and the checklist marks the item. Since Android 13 the account check answers "off" (and
+   `requestSync` does nothing) for an account the app cannot see, and the Google account usually is not
+   visible to the app (device test B2). So the account switch counts only if the account is in
+   `AccountManager.getAccountsByType("com.google")`; otherwise it is unknown and gives no warning.
+   Instead, the run counts the mapped copies written more than 30 min ago (`mapping.written_at`) that
+   are still `dirty = 1`. If there are any (and sync is not known to be off), Status warns "N changes
+   not uploaded to Google yet" and the checklist marks the item. A provider that does not show `dirty`
+   gives no signal and no failure.
 2. **Crash check.** If `meta.run_in_progress` is still set, this run includes the adoption scan (step
    6) even when it is INCREMENTAL. Then set the flag.
-3. **Fetch.** Call `GET /calendars` and mark lost calendars. Fetch events from each active calendar's
-   cursor, or everything in FULL. Store live events as snapshots, keep tombstones of occurrences that
-   have a `recurring_uuid`, and drop all other deleted or skipped events.
+3. **Fetch.** Call `GET /calendars` and mark lost calendars. Fetch each active calendar's feed from the
+   top: INCREMENTAL down to its high-water mark (section 3), everything in FULL. No high-water mark
+   means FULL. Store live events as snapshots, keep tombstones of occurrences that have a
+   `recurring_uuid`, and drop all other deleted or skipped events. Not settled yet: whether a deleted
+   event shows up in the feed as a tombstone (`deactivated_at`). In the device test the FULL after a
+   deletion fetched 7 of the 8 events, so the deleted one was apparently left out. Without a tombstone,
+   a deletion arrives with the next FULL (see above: within the sync interval for a small calendar,
+   within 6 h otherwise).
 4. **Affected events.** INCREMENTAL: the changed uuids and the parents of changed overrides and
    tombstones. FULL: everything in that calendar.
 5. **Diff.** This is the only step that deletes during sync. "In window" means `mapping.end_at` ≥ today −
@@ -231,8 +273,9 @@ changes, and on "Full resync". Every other run is `INCREMENTAL`.
    - `Write`, mapping with a different hash: verified update.
    - `Absent`, mapping in window, calendar active: verified delete.
    - FULL only: a mapping of an active calendar whose uuid is missing from that calendar's complete
-     `since=0` fetch, and which is in window, gets a verified delete. FULL also checks that each
-     in-window mapped row still exists and is ours, and re-adopts or re-inserts it if not.
+     fetch, and which is in window, gets a verified delete (an INCREMENTAL fetch never proves absence).
+     FULL also checks that each in-window mapped row still exists and is ours, and re-adopts or
+     re-inserts it if not.
    - Never touched: uuids not in the `Desired` map (out of window), mappings with an old `end_at`, and
      anything belonging to a paused calendar.
 6. **Adoption scan** (in FULL, after a crash, or with an empty mapping table). It runs after mapping
@@ -245,8 +288,8 @@ changes, and on "Full resync". Every other run is `INCREMENTAL`.
    - Any other marked row (unknown, dead, paused or out-of-window uuid) is left alone and counted in
      `SyncReport.unmanagedMarked`.
 7. **Apply** with `applyBatch` in chunks of 50. Each chunk's mappings go in one SQLite transaction.
-8. **Finish.** Advance a calendar's cursor only after its writes succeeded. Clear the flag, save the
-   report, and call `requestSync`.
+8. **Finish.** Advance a calendar's cursor (its high-water mark) only after its writes succeeded. Clear
+   the flag, save the report, and call `requestSync` as a best effort only (see step 1).
 
 **Hard rules** (in `ProviderCalendarGateway`):
 - **R1.** Update or delete only by `_ID`, and only after reading the row and checking `calendar_id ==
@@ -262,6 +305,10 @@ changes, and on "Full resync". Every other run is `INCREMENTAL`.
 - **R4.** Never use `CALLER_IS_SYNCADAPTER`. Never write Attendees, Reminders, ExtendedProperties or
   Calendars.
 - **R5.** Every query for our rows is limited to `calendar_id = target`.
+
+Known v1 behaviour (device test): TimeTree's default labels have empty names (the app shows them
+localized), so they add no `Label:` line; only renamed labels do. Adoption rewrites each adopted row
+once (`spec_hash=""`), which means one upload per row even when nothing changed.
 
 This makes a run idempotent: if nothing changed in TimeTree, it writes nothing. A crash leaves at most
 one marked row without a mapping, which the next run adopts. The cursor never moves past data that wasn't
@@ -317,13 +364,15 @@ Status.
    - Last successful sync, shown in red when it is more than 24 h ago, and the next run
      (`WorkInfo.nextScheduleTimeMillis`).
    - Counts: added, updated, deleted, skipped, plus `unmatchedOverrides`.
-   - Warnings: Google sync is off; battery is not unrestricted.
+   - Warnings: Google sync is off; N changes not uploaded to Google yet (section 5, step 1); battery is
+     not unrestricted.
    - The error, with a fix button.
    - Sync now.
 6. **Reliability**, one ✓/✗ row with a fix button each:
    - calendar permission;
    - notifications;
-   - **Google Calendar sync**: master sync and the account's calendar sync, fixed through
+   - **Google Calendar sync**: master sync and the account's calendar sync, or, when Android hides
+     the account's switch, whether the copies get uploaded (section 5, step 1); fixed through
      `Settings.ACTION_SYNC_SETTINGS`;
    - battery unrestricted;
    - Autostart (Xiaomi family only);
@@ -332,7 +381,9 @@ Status.
    - `dontkillmyapp.com/<manufacturer>`;
    - standby bucket (diagnosis only).
 7. **Settings**: interval 1 h (default), 3 h or 6 h, never shorter, as owners were promised; Sources;
-   Target; Full resync; Remove all copies; Sign out.
+   Target; Full resync; Remove all copies; Sign out. The adaptive FULL (section 5) keeps that promise:
+   it never adds runs, and a run that reads a small calendar completely costs a few requests, the
+   same order as an incremental one.
 8. **About/privacy.** Data flow, no server or analytics, password storage, unofficial-API disclaimer,
    version, certificate SHA-256, source, license.
 
@@ -358,9 +409,11 @@ Strings: English in `values/` is the default, German goes in `values-de/`. No UI
 
 - **Periodic work** (`ttsync-periodic`). Runs at the set interval with 15 min flex, needs
   `NetworkType.CONNECTED`, and backs off exponentially from 15 min. Enqueued with `UPDATE` when settings
-  change and `KEEP` at app start.
-- **Sync now** (`ttsync-now`). Expedited, falling back to a normal request. `getForegroundInfo()` shows
-  `sync_running`.
+  change and `KEEP` at app start. Each run is FULL or INCREMENTAL per calendar (section 5): a small
+  calendar is read completely every time, a larger one at least every 6 h.
+- **Sync now** (`ttsync-now`). Expedited, falling back to a normal request, never delayed (section 3,
+  Pacing). While a run is going on, the first request becomes its one follow-up and later ones merge
+  into it (FULL wins). `getForegroundInfo()` shows `sync_running`.
 - **Retries.** Transient and rate-limit errors retry while `runAttemptCount < 3`. Errors the user must
   fix fail and notify at once.
 - **Failure notification.** Appears after 3 failed runs in a row, or when the last success is over 24 h
@@ -397,7 +450,9 @@ Mapping:
 - M20: a switch from single to recurring and back writes explicit nulls.
 
 Client (mockwebserver3):
-- C1: login request and cookie, stable uuid. C2–C5: one page, chunked, decreasing cursor, repeated cursor.
+- C1: login request and cookie, stable uuid. C2–C5: one page; FULL paging backwards plus the second
+  pass from the top; INCREMENTAL from the top, stopping at a known event; a feed out of order; repeated
+  cursor; page cap.
 - C6: error mid-paging returns no list. C7: `-702`, `-495`, 429 with `Retry-After`, one re-login on 401.
 - C8: cookie rotation.
 
@@ -409,6 +464,10 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
 - E9: target change. E10: deselect.
 - E11: lost access. A FULL run plus an adoption scan delete nothing from the paused calendar.
 - E12: a failed run keeps the cursor.
+- Incremental after FULL picks up an edit, a new event and a tombstone; it stops after the first page
+  when the top of the feed is known; an event edited during a FULL read is not deleted.
+- Adaptive FULL: a small feed is FULL on every run (a deletion arrives with the next run), a larger
+  one INCREMENTAL with a FULL after 6 h; the recorded feed size switches the mode.
 - E13: a mapping with an old `end_at` that is missing from the full fetch stays untouched.
 - E14: marked rows with unknown or out-of-window uuids stay untouched, even in a FULL run on an empty
   mapping table.

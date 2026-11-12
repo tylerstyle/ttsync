@@ -47,7 +47,7 @@ class SqlSyncDatabaseTest {
 
   @Test
   fun mappingsRoundTripIncludingAdoptedAndOpenEnded() {
-    val open = Mapping("u1", 7, 15, 1001, Mapping.ADOPTED_HASH, Long.MAX_VALUE)
+    val open = Mapping("u1", 7, 15, 1001, Mapping.ADOPTED_HASH, Long.MAX_VALUE, writtenAt = 1234)
     val single = Mapping("u2", 7, 15, 1002, "ab".repeat(32), 1_794_481_200_000)
     val other = Mapping("u3", 8, 15, 1003, "cd".repeat(32), 0)
     db.mappings.upsert(listOf(open, single, other))
@@ -71,13 +71,14 @@ class SqlSyncDatabaseTest {
   @Test
   fun cursorsKeepNullsAndState() {
     val fresh = SyncCursor(7, null, null, CalendarState.ACTIVE, null)
-    val paused = SyncCursor(8, 1234, 5678, CalendarState.PAUSED, """[{"id":1,"name":"x"}]""")
+    val paused =
+      SyncCursor(8, 1234, 5678, CalendarState.PAUSED, """[{"id":1,"name":"x"}]""", lastFullPages = 4)
     db.cursors.put(fresh)
     db.cursors.put(paused)
     assertEquals(fresh, db.cursors.get(7))
     assertEquals(listOf(fresh, paused), db.cursors.all())
-    db.cursors.put(fresh.copy(since = 9))
-    assertEquals(9L, db.cursors.get(7)!!.since)
+    db.cursors.put(fresh.copy(highWater = 9))
+    assertEquals(9L, db.cursors.get(7)!!.highWater)
     db.cursors.delete(7)
     assertNull(db.cursors.get(7))
   }
@@ -85,7 +86,7 @@ class SqlSyncDatabaseTest {
   @Test
   fun unknownStoredStateReadsAsPaused() {
     sql.execute(
-      "INSERT INTO cursor (tt_cal_id, since, last_full_at, state, labels_json) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO cursor (tt_cal_id, high_water, last_full_at, state, labels_json) VALUES (?, ?, ?, ?, ?)",
       listOf(9L, null, null, "SOMETHING_NEW", null),
     )
     assertEquals(CalendarState.PAUSED, db.cursors.get(9)!!.state)
@@ -153,6 +154,55 @@ class SqlSyncDatabaseTest {
   }
 
   @Test
+  fun upgradeFromVersion1DropsTheServerCursorButKeepsTheRest() {
+    // Version 1 stored the server's `since`, a backwards paging cursor that made INCREMENTAL runs
+    // miss changes. The upgrade drops it (null forces one FULL) and keeps state, last FULL, labels.
+    val old = JdbcSqlConnection.inMemory()
+    try {
+      old.transaction {
+        V1_CREATE.forEach { old.execute(it) }
+        old.execute(
+          "INSERT INTO cursor (tt_cal_id, since, last_full_at, state, labels_json) VALUES (?, ?, ?, ?, ?)",
+          listOf(7L, 1794465807011L, 1794481200000L, "PAUSED", """[{"id":1,"name":"x"}]"""),
+        )
+        old.execute(
+          "INSERT INTO cursor (tt_cal_id, since, last_full_at, state, labels_json) VALUES (?, ?, ?, ?, ?)",
+          listOf(8L, null, null, "ACTIVE", null),
+        )
+        old.execute(
+          "INSERT INTO mapping (uuid, tt_cal_id, target_cal_id, event_id, spec_hash, end_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?)",
+          listOf("u1", 7L, 15L, 1001L, "h", 5L),
+        )
+      }
+      SyncSchema.upgrade(old, 1, SyncSchema.VERSION)
+      val upgraded = SqlSyncDatabase(old)
+      assertEquals(
+        listOf(
+          SyncCursor(7, null, 1794481200000L, CalendarState.PAUSED, """[{"id":1,"name":"x"}]"""),
+          SyncCursor(8, null, null, CalendarState.ACTIVE, null),
+        ),
+        upgraded.cursors.all(),
+      )
+      // Mappings keep everything; when they were written is unknown.
+      assertEquals(Mapping("u1", 7, 15, 1001, "h", 5, writtenAt = null), upgraded.mappings.get("u1"))
+      upgraded.mappings.upsert(listOf(Mapping("u2", 7, 15, 1002, "h", 5, writtenAt = 99)))
+      assertEquals(99L, upgraded.mappings.get("u2")!!.writtenAt)
+      val columns = old.query("PRAGMA table_info(cursor)") { it.string(1) }
+      assertEquals(
+        listOf("tt_cal_id", "high_water", "last_full_at", "state", "labels_json", "last_full_pages"),
+        columns,
+      )
+      assertEquals(SyncSchema.TABLES.toSet(), old.query("SELECT name FROM sqlite_master WHERE type = 'table'") { it.string(0) }.toSet())
+      // The upgraded table works like a fresh one.
+      upgraded.cursors.put(SyncCursor(7, 42, 1, CalendarState.ACTIVE, null))
+      assertEquals(42L, upgraded.cursors.get(7)!!.highWater)
+    } finally {
+      old.close()
+    }
+  }
+
+  @Test
   fun upgradeWithoutAStepChangesNothing() {
     db.meta.put("k", "v")
     assertThrows(IllegalStateException::class.java) {
@@ -170,5 +220,22 @@ class SqlSyncDatabaseTest {
     assertEquals(SyncSchema.TABLES.toSet() + "android_metadata", tables())
     assertEquals(0, db.mappings.count())
     assertFalse("added_by_a_newer_version" in tables())
+  }
+
+  private companion object {
+    /** The schema of version 1, as shipped before the high-water mark. */
+    val V1_CREATE =
+      listOf(
+        "CREATE TABLE snapshot (uuid TEXT NOT NULL PRIMARY KEY, tt_cal_id INTEGER NOT NULL, " +
+          "updated_at INTEGER NOT NULL, deactivated INTEGER NOT NULL, json TEXT NOT NULL)",
+        "CREATE INDEX snapshot_tt_cal_id ON snapshot (tt_cal_id)",
+        "CREATE TABLE mapping (uuid TEXT NOT NULL PRIMARY KEY, tt_cal_id INTEGER NOT NULL, " +
+          "target_cal_id INTEGER NOT NULL, event_id INTEGER NOT NULL, spec_hash TEXT NOT NULL, " +
+          "end_at INTEGER NOT NULL)",
+        "CREATE INDEX mapping_tt_cal_id ON mapping (tt_cal_id)",
+        "CREATE TABLE cursor (tt_cal_id INTEGER NOT NULL PRIMARY KEY, since INTEGER, " +
+          "last_full_at INTEGER, state TEXT NOT NULL, labels_json TEXT)",
+        "CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
+      )
   }
 }

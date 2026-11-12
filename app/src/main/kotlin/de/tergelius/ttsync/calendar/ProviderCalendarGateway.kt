@@ -2,6 +2,7 @@ package de.tergelius.ttsync.calendar
 
 import android.Manifest
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.content.ContentProviderOperation
 import android.content.ContentResolver
 import android.content.ContentUris
@@ -10,6 +11,7 @@ import android.content.Context
 import android.content.OperationApplicationException
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.database.sqlite.SQLiteException
 import android.os.Bundle
 import android.provider.CalendarContract
 import android.provider.CalendarContract.Calendars
@@ -54,11 +56,22 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
 
   override suspend fun calendar(calendarId: Long): CalendarInfo? = io { queryCalendar(calendarId) }
 
-  override fun googleSyncState(target: TargetCalendar): GoogleSyncState =
-    GoogleSyncState(
+  override fun googleSyncState(target: TargetCalendar): GoogleSyncState {
+    val account = target.account()
+    // Android 13+ answers false for an account the app cannot see; that means "unknown" here.
+    val visible =
+      try {
+        AccountManager.get(appContext).getAccountsByType(account.type).any { it == account }
+      } catch (e: RuntimeException) {
+        false
+      }
+    return GoogleSyncState(
       masterSync = ContentResolver.getMasterSyncAutomatically(),
-      calendarSync = ContentResolver.getSyncAutomatically(target.account(), CalendarContract.AUTHORITY),
+      calendarSync =
+        if (visible) ContentResolver.getSyncAutomatically(account, CalendarContract.AUTHORITY)
+        else null,
     )
+  }
 
   override suspend fun countForeignEvents(calendarId: Long): Int = io {
     query(
@@ -164,8 +177,38 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
   }
 
   /**
-   * `requestSync(account, "com.android.calendar", {EXPEDITED, MANUAL})`. The engine calls it only
-   * while Google sync is on, because a manual request would override the user's sync switches.
+   * Reads `dirty` of our rows, chunked by `_ID` and limited to the target (R5). A provider that
+   * refuses the column (an unknown column is an `IllegalArgumentException`, or a `SQLiteException`)
+   * gives null: no signal rather than a failed run.
+   */
+  override suspend fun pendingUploads(target: TargetCalendar, eventIds: Collection<Long>): Set<Long>? =
+    io {
+      try {
+        val dirty = HashSet<Long>()
+        for (chunk in eventIds.distinct().chunked(READ_CHUNK)) {
+          query(
+            Events.CONTENT_URI,
+            arrayOf(Events._ID),
+            "${Events._ID} IN (${chunk.joinToString(",") { "?" }}) AND ${Events.CALENDAR_ID} = ? " +
+              "AND ${Events.DELETED} = 0 AND ${Events.DIRTY} = 1",
+            (chunk.map { it.toString() } + target.calendarId.toString()).toTypedArray(),
+          ) { cursor ->
+            cursor.getLong(0)
+          }
+            .forEach { dirty += it }
+        }
+        dirty
+      } catch (e: IllegalArgumentException) {
+        null
+      } catch (e: SQLiteException) {
+        null
+      }
+    }
+
+  /**
+   * `requestSync(account, "com.android.calendar", {EXPEDITED, MANUAL})`, best effort. The engine
+   * calls it only while Google sync is not known to be off, because a manual request would override
+   * the user's sync switches. For an account the app cannot see it does nothing (Android 13+).
    */
   override fun requestUpload(target: TargetCalendar) {
     val extras =

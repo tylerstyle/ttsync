@@ -64,8 +64,10 @@ data class TtLabel(val id: Long, val name: String? = null) {
 }
 
 /**
- * One page of `GET /calendar/{id}/events/sync[?since=N]`. The events stay raw [JsonObject]s so
- * that each one can be stored verbatim as a snapshot; decode them with [TtEvent.fromJson].
+ * One page of `GET /calendar/{id}/events/sync[?since=N]`, newest change first. [since] asks for the
+ * next older page and [chunk] is false on the oldest one (see [EventFeed]). The events stay raw
+ * [JsonObject]s so that each one can be stored verbatim as a snapshot; decode them with
+ * [TtEvent.fromJson].
  */
 @Serializable
 data class TtEventsPage(
@@ -124,6 +126,13 @@ data class TtEvent(
 
   val isOverride: Boolean
     get() = recurringUuid != null || parentId != null
+
+  /**
+   * When this version of the event came to be (TimeTree's clock): the later of [updatedAt] and
+   * [deactivatedAt]. The sync cursor's high-water mark is the largest of these (DESIGN.md section 5).
+   */
+  val changedAt: Long
+    get() = maxOf(updatedAt, deactivatedAt ?: updatedAt)
 
   override fun toString(): String =
     "TtEvent(uuid=${uuid.take(8)}, allDay=$allDay, override=$isOverride, deactivated=$isDeactivated)"

@@ -73,8 +73,11 @@ class DebugReceiver : BroadcastReceiver() {
 
   private suspend fun enqueue(graph: AppGraph, full: Boolean): String {
     val r = graph.workScheduler.runNowAndWait(full = full, trigger = SyncTrigger.DEBUG)
-    return "${SyncScheduler.NOW_WORK} enqueued full=${r.full} expedited=${r.expedited} " +
-      "startsIn=${r.delayMillis / 1000}s afterRunning=${r.afterRunning}; wait for 'run finished'"
+    r.recentlySyncedAgoMillis?.let {
+      return "${SyncScheduler.NOW_WORK} not enqueued: synced ${it / 1000} s ago (no run needed)"
+    }
+    return "${SyncScheduler.NOW_WORK} enqueued full=${r.full} afterRunning=${r.afterRunning} " +
+      "coalesced=${r.coalesced}; wait for 'run finished'"
   }
 
   companion object {

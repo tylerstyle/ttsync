@@ -83,6 +83,16 @@ class SourcesViewModel(
     }
   }
 
+  /**
+   * The screen is shown again, e.g. back from "Sign in again": a list that failed for want of a
+   * sign-in is loaded again (phase 5 review, SHOULD-FIX-3).
+   */
+  fun onResume() {
+    val current = _state.value
+    if (current.saveError == SourcesError.SIGN_IN) _state.update { it.copy(saveError = null) }
+    if (current.loadError == SourcesError.SIGN_IN && !current.loading) load()
+  }
+
   fun toggle(id: Long) = _state.update { state ->
     state.copy(
       options = state.options.map { if (it.id == id) it.copy(selected = !it.selected) else it },
