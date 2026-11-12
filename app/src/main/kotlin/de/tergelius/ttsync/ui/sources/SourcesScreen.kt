@@ -247,6 +247,7 @@ private fun SourceCheckRow(option: SourceOption, onToggle: () -> Unit, enabled: 
   Row(
     modifier =
       Modifier.fillMaxWidth()
+        .heightIn(min = 48.dp)
         .toggleable(
           value = option.selected,
           enabled = enabled,

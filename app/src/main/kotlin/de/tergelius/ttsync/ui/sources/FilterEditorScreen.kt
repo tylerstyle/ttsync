@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
@@ -151,6 +152,7 @@ private fun ChoiceRow(
   Row(
     modifier =
       Modifier.fillMaxWidth()
+        .heightIn(min = 48.dp)
         .toggleable(value = selected, role = Role.Checkbox, onValueChange = { onToggle() })
         .padding(vertical = 4.dp),
     verticalAlignment = Alignment.CenterVertically,
