@@ -3,11 +3,12 @@
 # 9, 11 and 13). It only runs `content query`; it never writes to the device.
 #
 # Usage:
-#   ADB='ssh the test host adb -s <serial>' scripts/device-verify.sh <calendar_id>
-#   ADB='ssh the test host adb -s <serial>' scripts/device-verify.sh -l      # list calendars and their ids
+#   ADB='adb -s <serial>' scripts/device-verify.sh <calendar_id>
+#   ADB='adb -s <serial>' scripts/device-verify.sh -l      # list calendars and their ids
 #
-# ADB is the adb command prefix (default: adb). The queries are sent on stdin to `adb shell`, so
-# they need no extra quoting when ADB goes through ssh.
+# ADB is the adb command prefix (default: adb), e.g. 'ssh <host> adb -s <serial>' for a phone on
+# another machine. The queries are sent on stdin to `adb shell`, so they need no extra quoting when
+# ADB goes through ssh.
 #
 # Output for <calendar_id> (rows with deleted=0):
 # - our rows, whose description ends with the marker line `[ttsync:<uuid>]` (the app's strict rule):

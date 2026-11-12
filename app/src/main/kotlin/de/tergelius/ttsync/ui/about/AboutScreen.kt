@@ -24,11 +24,8 @@ import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * The source repository, shown on About once it is published (DESIGN.md section 13, open question
- * 2). Empty hides the link.
- */
-const val SOURCE_URL = ""
+/** The source repository, linked from About. Empty hides the link. */
+const val SOURCE_URL = "https://github.com/tylerstyle/ttsync"
 
 /** About and privacy (DESIGN.md section 7.8). */
 @Composable
@@ -103,7 +100,10 @@ fun signingCertificateSha256(context: Context): String? =
 object Fingerprint {
   private const val HEX = "0123456789ABCDEF"
 
-  /** `AB:CD:…`, the form `apksigner verify --print-certs` and the README use. */
+  /**
+   * `AB:CD:…`, the form keytool and the README use. `apksigner verify --print-certs` prints the same
+   * digest as lowercase hex without colons.
+   */
   fun format(bytes: ByteArray): String =
     bytes.joinToString(":") { byte ->
       val v = byte.toInt() and 0xFF

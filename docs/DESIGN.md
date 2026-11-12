@@ -1,14 +1,22 @@
-# TT Calendar Sync: design and implementation plan (v1)
+# TT Calendar Sync: design record (v1)
 
-Status: plan, 2026-11-12, revised the same day after android-agy's review
-(`docs/review-design-agy.md`, outcomes in section 14). Everything here is decided for v1, except the
-items marked **decided by fixtures** and the questions in section 13.
-User decisions: the app is named "TT Calendar Sync", the license is Apache-2.0 (`LICENSE`), copies are
-kept when access is lost, and `ttsync/` is its own git repo (local commits for now, GitHub later).
-Sources: `~/git/timetree-sync/reports/android-claude-ondevice-answers.md` (TimeTree API, owner promises),
-`~/git/android/notes/android-ondevice-research.md` (CalendarContract, background, release),
-`~/git/android/oneplus8/notes/timetree-device-inventory.md` (test phone), eoleedi/TimeTree-Exporter,
-yehzu/timetree-sync, TimeForest `docs/internals.md`.
+> **This is the design record**, not the starting point. For an overview of the code, how to build
+> and test it and how to contribute, read [DEVELOPMENT.md](DEVELOPMENT.md). The user guide is the
+> [README](../README.md).
+
+This document was written as the v1 implementation plan and records why things are the way they are.
+Later fixes were folded in (device test results in [DEVICE-TESTS.md](DEVICE-TESTS.md)), but class
+lists and phase notes reflect the plan: where the code differs in naming, the code wins.
+
+Status: plan of 2026-11-12, revised the same day after the design review
+([reviews/design-agy.md](reviews/design-agy.md), outcomes in section 14). Everything here was decided
+for v1, except the items marked **decided by fixtures** and the questions in section 13.
+Decisions by the project owner: the app is named "TT Calendar Sync", the license is Apache-2.0
+(`LICENSE`), copies are kept when access is lost, and `ttsync/` is its own git repo, published at
+<https://github.com/tylerstyle/ttsync>.
+Sources: the project's own research notes on TimeTree's web API, `CalendarContract`, background
+execution and release options (not published), the inventory of the test phone, and the public
+projects eoleedi/TimeTree-Exporter, yehzu/timetree-sync and TimeForest (`docs/internals.md`).
 
 ## 1. Scope
 
@@ -205,9 +213,9 @@ with a `recurring_uuid`). Those tombstones are kept in `snapshot`. The resolver 
 3. **No guessing.** Otherwise add no EXDATE: there is no nearest-instance heuristic. Count the case in
    `SyncReport.unmatchedOverrides` (shown on Status), since it can leave a duplicate or a stale occurrence.
 
-The raw API dumps of the test data settle which rule applies. oneplus-claude is creating that data now:
-a weekly series with one moved and one deleted occurrence, a two-day all-day event, and an event with a
-label, note, URL and location. Phase 3 finalizes this rule from those dumps.
+The raw API dumps of the test data settle which rule applies. The test data, created in a test
+TimeTree calendar: a weekly series with one moved and one deleted occurrence, a two-day all-day event,
+and an event with a label, note, URL and location. Phase 3 finalizes this rule from those dumps.
 
 Further handling:
 - If the parent is missing, the override stays standalone.
@@ -474,8 +482,10 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
   mapping table.
 - E15: a failed `withExpectedCount` precondition aborts the chunk, which is replayed one operation at a time.
 
-**On the device.** The phone is `<serial>` on the test host, with `A` = `ssh the test host adb -s <serial>`.
-`scripts/device-verify.sh` wraps steps 1, 5 and 6.
+**On the device.** `A` stands for the adb command of the test phone, for example `adb -s <serial>`
+(or `ssh <host> adb -s <serial>` when the phone is connected to another machine), and `<target>` for
+the `_id` of the target calendar (`scripts/device-verify.sh -l` lists them). The test setup's target
+calendar held 7 events of its own. `scripts/device-verify.sh` wraps steps 1, 5 and 6.
 
 0. **DURATION form.** Read how Google's sync stores durations, without titles:
    `A shell content query --uri content://com.android.calendar/events --projection
@@ -484,15 +494,15 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
    sync are on for the account (Settings → Accounts).
 1. **Baseline.** `A shell content query --uri content://com.android.calendar/events --projection
    _id:title:dtstart:dtend:duration:eventTimezone:allDay:rrule:exdate:deleted:dirty:_sync_id --where
-   "calendar_id=15"`. Save the output; it should show 7 rows.
+   "calendar_id=<target>"`. Save the output; in the test setup it shows 7 rows.
 2. **Install.** `A install -r` the APK; `A shell pm grant de.tergelius.ttsync
    android.permission.READ_CALENDAR` (likewise `WRITE_CALENDAR`, `POST_NOTIFICATIONS`);
    `A shell dumpsys deviceidle whitelist +de.tergelius.ttsync`.
 3. **Setup.** The user signs in on the phone (the password never goes over adb) and picks the TimeTree
-   calendar and `personal`.
+   calendar and the target calendar.
 4. **Sync.** `A shell am broadcast -a de.tergelius.ttsync.debug.SYNC_NOW -n
    de.tergelius.ttsync/.debug.DebugReceiver`, then wait for `run finished` in `A logcat -s TtSync`.
-5. **Check the copies** (`calendar_id=15 AND description LIKE '%[ttsync:%'`): count = live in-window
+5. **Check the copies** (`calendar_id=<target> AND description LIKE '%[ttsync:%'`): count = live in-window
    events in the raw dump; `dtstart` = 1794481200000 (2026-11-12 12:00 Europe/Berlin) + n·86400000, up
    to 1794740400000 (2026-11-15); `eventTimezone=Europe/Berlin`; correct `dtend`.
 6. **Foreign events.** The 7 baseline rows are unchanged.
@@ -501,7 +511,7 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
 8. **No-op run.** SYNC_NOW again: the report is 0/0/0.
 9. **Changes.** The user edits a time and a title in TimeTree and deletes an event. After a sync, the same
    `_ID`s are updated and the deleted row is gone.
-10. **Recurring.** Use the test data from oneplus-claude and check `instances/when/<begin>/<end>`:
+10. **Recurring.** Use the recurring test data and check `instances/when/<begin>/<end>`:
     no duplicate on the moved occurrence's original day, the deleted occurrence is gone, the two-day
     all-day event covers exactly two days, and `unmatchedOverrides` is 0.
 11. **Adoption.** `DROP_MAPPINGS`, then sync: nothing is inserted.
@@ -515,14 +525,15 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
 
 ## 11. Release
 
-- **Signing key.** One RSA 4096 key (alias `ttsync`, 10000 days) at `~/keys/ttsync/release.jks` on
+- **Signing key.** One RSA 4096 key (alias `ttsync`, 10950 days) at `~/keys/ttsync/release.jks` on
   the build machine, mode 600, outside every repo. Back it up offline, with its passwords, in the user's password
   manager: without it there are no updates and no developer-verification registration.
 - **Build.** Gradle reads `ttsync.signing.*` from `~/.gradle/gradle.properties` and builds unsigned
   without them; no key in CI. Release uses R8 and resource shrinking. Add `app/proguard-rules.pro` (the
   template references it, but it is missing).
-- **Repo and license.** `ttsync/` is its own git repo: local commits now, a GitHub remote later (owner
-  and name still open). Apache-2.0, see `LICENSE`.
+- **Repo and license.** `ttsync/` is its own git repo, published as
+  <https://github.com/tylerstyle/ttsync>. Apache-2.0, see `LICENSE`; third-party licenses in
+  [LICENSES.md](LICENSES.md).
 - **Versions.** Semver `versionName` (starting at 0.1.0). `versionCode = major·10000 + minor·100 + patch`.
   Tags look like `v0.1.0`.
 - **Publishing.**
@@ -533,7 +544,7 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
   unregistered; decide before then. Publish the certificate SHA-256 in the README now.
 
 **README outline:** what it is and isn't (one-way, read-only, unofficial, not affiliated with
-TimeTree); requirements; **Google/Apple sign-in workaround** (set a password in TimeTree, steps from open question 1,
+TimeTree); requirements; **Google/Apple sign-in workaround** (set an email and a password in TimeTree, section 13,
 or have the owner invite a separate email account); install via Releases or Obtainium with the
 certificate fingerprint; setup; keeping it running; what to expect (about hourly, edits to copies are
 overwritten, deleted copies return, reminders follow the calendar's defaults); privacy; uninstall
@@ -562,16 +573,16 @@ Resolved:
 - Access lost: keep the copies and notify.
 - The app is named "TT Calendar Sync" and licensed under Apache-2.0.
 - `ttsync/` is its own git repo.
-- oneplus-claude is creating the test data.
+- The test data was created in a test TimeTree calendar (see [DEVICE-TESTS.md](DEVICE-TESTS.md)).
+- The Google/Apple sign-in workaround: in the TimeTree app, More → Manage Account → Change email
+  address, then Change password; then sign in with that email and password. It is in the README.
+- The repository is <https://github.com/tylerstyle/ttsync>.
 
-Still open:
-1. What exact steps did you use in TimeTree to switch from Google sign-in to email + password? They go in
-   the README.
-2. Which GitHub owner and repo name? Only needed when the code is published.
+Still open: none for v1.
 
 ## 14. Review resolution
 
-From `docs/review-design-agy.md` (android-agy), with the coordinator's decisions:
+From the design review ([reviews/design-agy.md](reviews/design-agy.md)), with the decisions taken:
 
 | Finding | Outcome | Where |
 |---|---|---|

@@ -1,9 +1,9 @@
 # Review of Phase 4: Stores, Calendar Gateway, and Sync Engine
 
-**Reviewer:** android-agy (Antigravity / agy)  
+**Reviewer:** agy (Antigravity, Gemini)  
 **Date:** 2026-11-12  
 **Commit Range:** `071ae2d..52065ff` (commits `fc668c8`, `52065ff`, packages `store/`, `calendar/`, `sync/`, tests, and fixtures)  
-**Reference Document:** `ttsync/docs/DESIGN.md` (Sections 2, 4, 5, 6, 10, 14)  
+**Reference Document:** `docs/DESIGN.md` (Sections 2, 4, 5, 6, 10, 14)  
 
 ---
 
@@ -187,7 +187,7 @@ None.
 
 ---
 
-## Resolution (android-claude, phase 5, 2026-11-12)
+## Resolution (Claude Code, phase 5, 2026-11-12)
 
 - SHOULD-FIX-1: fixed. `deselect()` changes the selection only after the deletes went through,
   together with dropping snapshots, mappings and cursors; a failed removal keeps the calendar

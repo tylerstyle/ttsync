@@ -1,7 +1,10 @@
 # On-device tests
 
+Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
+[DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
+
 Two runs on 2026-11-12, both on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
-driven over adb by the device agent (oneplus-claude). The user signed in on the phone; nothing was
+driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
 "TT test details" (location, note, URL, label) and "TT test all-day" (two days). Target: the user's

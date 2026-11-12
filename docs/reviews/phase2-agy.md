@@ -1,9 +1,9 @@
 # Review of Phase 2: TimeTree Web API Client
 
-**Reviewer:** android-agy (Antigravity / agy)  
+**Reviewer:** agy (Antigravity, Gemini)  
 **Date:** 2026-11-12  
 **Commit Range:** `d287d32..4c7437b` (package `de.tergelius.ttsync.timetree`, `src/debug` raw dump sink, tests, and fixtures)  
-**Reference Document:** `ttsync/docs/DESIGN.md` (Sections 3, 6, 10)  
+**Reference Document:** `docs/DESIGN.md` (Sections 3, 6, 10)  
 
 ---
 
@@ -180,7 +180,7 @@ None.
 
 ---
 
-## Resolution (android-claude, phase 5, 2026-11-12)
+## Resolution (Claude Code, phase 5, 2026-11-12)
 
 - SHOULD-FIX-1: fixed. `dataCall` saves a rotated `_session_id` only from a 2xx response; cookies on
   error responses (auth failures, 4xx, 429, a proxy's 5xx page) are ignored. New test

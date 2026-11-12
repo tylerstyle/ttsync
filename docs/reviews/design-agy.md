@@ -1,12 +1,12 @@
 # Review of TT Calendar Sync Design (v1)
 
-**Reviewer:** android-agy (Antigravity / agy)  
+**Reviewer:** agy (Antigravity, Gemini)  
 **Date:** 2026-11-12  
-**Target Document:** `ttsync/docs/DESIGN.md` (2026-11-12)  
+**Target Document:** `docs/DESIGN.md` (2026-11-12)  
 **Inputs Evaluated:**
-- `notes/cal-claude-ondevice-answers.md` (TimeTree web API specifics, owner promises)
-- `notes/android-ondevice-research.md` (CalendarContract, sync adapter mechanics, background execution, distribution)
-- `notes/timetree-device-inventory.md` (Target test environment: OnePlus 8 Pro, LineageOS 24 / Android 17)
+- The project's research notes (not published): TimeTree web API specifics and owner promises
+- The project's research notes (not published): CalendarContract, sync adapter mechanics, background execution, distribution
+- The test device inventory (not published): OnePlus 8 Pro, LineageOS 24 / Android 17
 
 ---
 
@@ -221,5 +221,5 @@ However, the design contains **4 Blockers** that will cause runtime data corrupt
 ## Conclusion & Next Steps
 
 Once the 4 Blockers and key Should-Fix items are adjusted in the design:
-1. `ttsync/docs/DESIGN.md` will provide a completely watertight blueprint.
+1. `docs/DESIGN.md` will provide a completely watertight blueprint.
 2. Phase 1 (Foundation and interfaces) can proceed with zero risk of architectural rework in mapping, database schema, or background sync.

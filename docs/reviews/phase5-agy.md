@@ -1,4 +1,4 @@
-# Phase 5 & Phase 6 Code Review (`d2756c2`, `f24355a`) — `android-agy`
+# Phase 5 & Phase 6 Code Review (`d2756c2`, `f24355a`) — agy (Antigravity, Gemini)
 
 Reviewed commits:
 - Phase 5 (`d2756c2`, diff `eb65008..d2756c2`): `KeystoreCredentialStore.kt`, `AndroidStores.kt`, `StoredSessionStore.kt`, `WorkManagerSyncScheduler.kt`, `SyncWorker.kt`, `SyncNotifier.kt`, `DebugReceiver.kt`, `AppGraph.kt`, `App.kt`, `UserActions.kt`, manifests, backup XML rules, and tests.
@@ -48,8 +48,8 @@ None.
 
 #### SHOULD-FIX-1: `removeAllCopies` wipes `SyncDb` before checking if the target is writable, and `UserActions` calls `gateway.calendar()` outside `engine.removeAllCopies`
 - **Where:**
-  - `ttsync/app/src/main/kotlin/de/tergelius/ttsync/sync/SyncEngine.kt:152-162` and `226-238`
-  - `ttsync/app/src/main/kotlin/de/tergelius/ttsync/ui/UserActions.kt:216-241` and `253-269`
+  - `app/src/main/kotlin/de/tergelius/ttsync/sync/SyncEngine.kt:152-162` and `226-238`
+  - `app/src/main/kotlin/de/tergelius/ttsync/ui/UserActions.kt:216-241` and `253-269`
 - **Problem:**
   1. In `SyncEngine.removeAllCopies(target, stopSyncing = true)` (`SyncEngine.kt:155`), `if (stopSyncing) stopSyncing()` runs **before** `targetWritable(target)`, `gateway.findMarkedRows(target)`, and `deleteVerified(...)`. Inside `stopSyncing()` (`SyncEngine.kt:226-238`), it clears `settings.sources` **and** deletes all rows in `db.snapshots`, `db.cursors`, and `db.mappings`. If `targetWritable`, `findMarkedRows`, or `deleteVerified` subsequently fails, `UserActions.restore(current)` restores `settings.sources` in DataStore, **but `db.snapshots` (including tombstones), `db.cursors` (including `CalendarState.PAUSED` states and `since` cursors), and `db.mappings` have already been wiped**. Because `removeAllCopies` holds `LOCK.withLock` (and `UserActions` cancels scheduled work beforehand), no sync can run concurrently while deletes are in progress.
   2. In `UserActions.removeAllCopies()` (`UserActions.kt:223`) and `UserActions.signOut()` (`UserActions.kt:260`), `target.check(gateway.calendar(target.calendarId))` is called **before** `engine.removeAllCopies(target)`. On a real device (`ProviderCalendarGateway`), if the user revoked `READ_CALENDAR`/`WRITE_CALENDAR` and taps "Remove all copies" or "Sign out" (with "Remove copies" checked), `gateway.calendar(...)` throws `SecurityException` directly instead of letting `engine.removeAllCopies(target)` return `RemovalReport(failure = SyncFailure(NO_CALENDAR_PERMISSION))` (which `SyncEngine.targetWritable` already handles alongside `TargetCheck.MISSING -> false`). In `SettingsViewModel.confirmRemoveAll()` (`SettingsViewModel.kt:87-89`), that thrown `SecurityException` lands in `catch (_: Exception)` with `removalFailed = false`, showing the generic `R.string.error_unknown` instead of `R.string.error_removal_failed`.
@@ -72,7 +72,7 @@ None.
 ---
 
 #### SHOULD-FIX-2: Repeated `runNow()` calls while `NOW_WORK` is `RUNNING` build an unbounded work chain
-- **Where:** `ttsync/app/src/main/kotlin/de/tergelius/ttsync/sync/WorkManagerSyncScheduler.kt:176-218`
+- **Where:** `app/src/main/kotlin/de/tergelius/ttsync/sync/WorkManagerSyncScheduler.kt:176-218`
 - **Problem:**
   When a `NOW_WORK` request `W1` is currently `RUNNING`, line 211 uses `ExistingWorkPolicy.APPEND_OR_REPLACE`. In WorkManager, `APPEND_OR_REPLACE` only replaces if the existing unique work chain is `CANCELLED` or `FAILED`; while `W1` is `RUNNING`, the first `runNow()` appends `W2` in state `BLOCKED` (`W1 -> W2`), and any subsequent `runNow()` while `W1` is still `RUNNING` appends `W3` behind `W2` (`W1 -> W2 -> W3`), and so on. All appended items will then execute back-to-back after `W1` finishes, rather than coalescing into a single pending follow-up run as described in the class comment (*"A pending request is replaced, and a pending FULL stays FULL"*).
 - **Concrete fix:**
@@ -99,8 +99,8 @@ None.
 
 #### SHOULD-FIX-3: "Sign in again" from `SourcesScreen` either leaves `SourcesScreen` on `SourcesError.SIGN_IN` or pops back to `StatusRoute`
 - **Where:**
-  - `ttsync/app/src/main/kotlin/de/tergelius/ttsync/Navigation.kt:154-171`
-  - `ttsync/app/src/main/kotlin/de/tergelius/ttsync/ui/sources/SourcesScreen.kt:44-68`
+  - `app/src/main/kotlin/de/tergelius/ttsync/Navigation.kt:154-171`
+  - `app/src/main/kotlin/de/tergelius/ttsync/ui/sources/SourcesScreen.kt:44-68`
 - **Problem:**
   When `SourcesViewModel.load()` fails with `SourcesError.SIGN_IN`, `SourcesScreen` shows the "Sign in again" button, which pushes `LoginRoute(reauth = true)` (`Navigation.kt:72`). After the user signs in on `LoginScreen`:
   1. If `SourcesScreen` was opened during setup (`SourcesRoute(setup = true)`), `actions.signIn` returns `SetupStep.SOURCES` and `AppNavigator.onSetupProgress` calls `resetTo(SourcesRoute(setup = true))`. Because `SourcesRoute(setup = true)` was already in `backStack` and remains in `backStack` after `resetTo`, `rememberViewModelStoreNavEntryDecorator()` reuses the existing `SourcesViewModel` instance whose `state.value.loadError` is still `SourcesError.SIGN_IN`, and `SourcesScreen` has no resume effect to reload. The user lands back on `SourcesScreen` still seeing the expired sign-in error.
@@ -127,7 +127,7 @@ None.
 ---
 
 #### SHOULD-FIX-4: Denying a runtime permission on the second system prompt immediately launches system Settings
-- **Where:** `ttsync/app/src/main/kotlin/de/tergelius/ttsync/ui/common/Permissions.kt:26-44` and `52-78`
+- **Where:** `app/src/main/kotlin/de/tergelius/ttsync/ui/common/Permissions.kt:26-44` and `52-78`
 - **Problem:**
   In both `rememberCalendarPermissionRequest` and `rememberNotificationRequest`, the `ActivityResultContracts` callback checks `!granted && !ActivityCompat.shouldShowRequestPermissionRationale(...)` right after the system permission dialog closes and immediately calls `SystemIntents.start(context, ...)`.
   On Android 11+, when the user sees the runtime permission dialog for the second time (`shouldShowRequestPermissionRationale` was `true` when the button was tapped) and taps "Don't allow", Android transitions `shouldShowRequestPermissionRationale` to `false` as the dialog closes. The callback immediately fires and launches the system App Info / Notification Settings activity right after the user explicitly tapped "Don't allow". System Settings should only be opened when the dialog was **not shown** because the permission was already permanently denied *before* the user tapped the button.
@@ -168,14 +168,14 @@ None.
 ### Nits
 
 #### NIT-1: `DataStoreSettingsRepository.installUuid()` reads `store.data` instead of `store.safeData()`
-- **Where:** `ttsync/app/src/main/kotlin/de/tergelius/ttsync/settings/AndroidStores.kt:96`
+- **Where:** `app/src/main/kotlin/de/tergelius/ttsync/settings/AndroidStores.kt:96`
 - **Problem:**
   Line 96 calls `store.data.first()[INSTALL_UUID]` directly rather than `store.safeData().first()[INSTALL_UUID]`, bypassing the `IOException` catch helper defined on line 64.
 - **Concrete fix:**
   Use `store.safeData().first()[INSTALL_UUID]?.takeIf(::isInstallUuid)?.let { return it }`.
 
 #### NIT-2: Eager `noBackupFilesDir` lookup and intermediate JSON `String` in `KeystoreCredentialStore`
-- **Where:** `ttsync/app/src/main/kotlin/de/tergelius/ttsync/settings/KeystoreCredentialStore.kt:43, 134, 142`
+- **Where:** `app/src/main/kotlin/de/tergelius/ttsync/settings/KeystoreCredentialStore.kt:43, 134, 142`
 - **Problem:**
   1. Line 43 evaluates `context.applicationContext.noBackupFilesDir` in the constructor, which can perform a synchronous `mkdirs()` check on the main thread when `AppGraph.credentialStore` is first initialized from `MainViewModel`.
   2. Lines 134 and 142 zero out `plain: ByteArray` in `finally`, which is good practice, though `JSON.encodeToString(...).encodeToByteArray()` and `plain.decodeToString()` still allocate an immutable `String` of the JSON payload on the heap.
@@ -186,7 +186,7 @@ None.
 
 ## Resolution
 
-Fixed on branch `fixes1` (android-claude, 2026-11-12), together with the on-device test findings.
+Fixed on branch `fixes1` (Claude Code, 2026-11-12), together with the on-device test findings.
 
 | Finding | Outcome | Where |
 |---|---|---|

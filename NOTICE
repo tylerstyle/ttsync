@@ -1,0 +1,15 @@
+TT Calendar Sync
+Copyright 2026 The TT Calendar Sync authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The files app/src/main/kotlin/de/tergelius/ttsync/ui/theme/Color.kt and Theme.kt
+are based on the Android Studio project template,
+Copyright The Android Open Source Project, licensed under the Apache License, Version 2.0.
+
+The app bundles third-party libraries under their own licenses, among them
+Protocol Buffers (BSD-3-Clause, Copyright 2008 Google Inc.) and the Public Suffix
+List (Mozilla Public License 2.0). See docs/LICENSES.md for the full list and notices.
+
+TT Calendar Sync is not affiliated with, endorsed or sponsored by TimeTree, Inc.
+TimeTree is a trademark of its owner.

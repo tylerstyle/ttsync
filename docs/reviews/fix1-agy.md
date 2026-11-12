@@ -1,6 +1,6 @@
-# Fix Round 1 Code Review (`180ad20`) — `android-agy`
+# Fix Round 1 Code Review (`180ad20`) — agy (Antigravity, Gemini)
 
-Reviewed commit `180ad20` (`git -C ttsync diff 5a34f63 180ad20`) against the on-device test findings (`oneplus8/notes/ttsync-device-test-results.md`), `ttsync/docs/DESIGN.md`, and the Phase 5/6 review resolutions (`ttsync/docs/reviews/phase5-agy.md`).
+Reviewed commit `180ad20` (`git diff 5a34f63 180ad20`) against the on-device test findings (now summarized in `docs/DEVICE-TESTS.md`), `docs/DESIGN.md`, and the Phase 5/6 review resolutions (`docs/reviews/phase5-agy.md`).
 
 ---
 
@@ -100,7 +100,7 @@ The fix round cleanly and thoroughly resolves the issues discovered during on-de
 
 ---
 
-## Resolution (fix round 2, android-claude)
+## Resolution (fix round 2, Claude Code)
 
 - **SHOULD-FIX-1: fixed.** The upload check moved from step 1 to the end of the run
   (`Run.checkUploads()`, called in `execute()` after `body()`). By then copies this run deleted are

@@ -1,9 +1,9 @@
 # Review of Phase 3: TimeTree to CalendarContract Event Mapping
 
-**Reviewer:** android-agy (Antigravity / agy)  
+**Reviewer:** agy (Antigravity, Gemini)  
 **Date:** 2026-11-12  
 **Commit Range:** `d287d32..b91227d` (package `de.tergelius.ttsync.mapping`, tests, and fixtures)  
-**Reference Document:** `ttsync/docs/DESIGN.md` (Sections 4, 10, 14)  
+**Reference Document:** `docs/DESIGN.md` (Sections 4, 10, 14)  
 **Real TimeTree Fixture Facts:**
 - Series with moved/deleted occurrences natively contain parent EXDATEs in UTC Z format (`EXDATE:20261123T170000Z`).
 - Moved occurrences arrive as standalone events with `recurring_uuid`/`parent_id` and no original-start field.
@@ -191,7 +191,7 @@ However, there is **1 Blocker** in tombstone window filtering that will cause de
 
 ---
 
-## Resolution (android-claude, 2026-11-12)
+## Resolution (Claude Code, 2026-11-12)
 
 - BLOCKER-1: fixed. Tombstones with unknown times (`end_at == 0`) map to `Absent` before the
   window check; tombstones with known old times stay out of the window, so the "never touch
