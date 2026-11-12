@@ -25,6 +25,6 @@ object SpecHash {
       }
     }
     val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
-    return digest.joinToString("") { "%02x".format(it) }
+    return digest.joinToString("") { "%02x".format(java.util.Locale.ROOT, it) }
   }
 }

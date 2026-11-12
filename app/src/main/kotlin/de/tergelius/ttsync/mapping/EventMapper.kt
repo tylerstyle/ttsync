@@ -145,12 +145,16 @@ class DefaultEventMapper : EventMapper {
       if (!Marker.isValidUuid(event.uuid)) continue
       val shape = shapeOf(event)
       when {
+        // A tombstone may carry start/end 0 ("unknown"); the window check must not drop
+        // it. Whether a copy gets deleted is decided by the engine from the mapping's own
+        // end_at. Tombstones with known old times stay out of the window as before.
+        event.isDeactivated && event.endAt == 0L -> desired[event.uuid] = Desired.Absent
         shape.endAt < windowStart -> outOfWindow++
+        event.isDeactivated -> desired[event.uuid] = Desired.Absent
         event.isBirthday || event.isMemo -> {
           skipped++
           desired[event.uuid] = Desired.Absent
         }
-        event.isDeactivated -> desired[event.uuid] = Desired.Absent
         else -> {
           val recurrence = shape.recurrence
           if (recurrence != null) {

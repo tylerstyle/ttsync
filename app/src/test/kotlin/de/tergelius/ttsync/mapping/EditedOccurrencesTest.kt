@@ -110,6 +110,17 @@ class EditedOccurrencesTest {
   }
 
   @Test
+  fun tombstoneWithUnknownTimesIsAbsentNotOutOfWindow() {
+    // Lenient decoding gives tombstones without times start/end 0 ("unknown").
+    // They must still reach the engine as Absent (review phase3-agy BLOCKER-1).
+    val single = events.first { it.recurringUuid == null && it.recurrences.isEmpty() && !it.allDay }
+    val tombstone = single.copy(startAt = 0, endAt = 0, deactivatedAt = single.updatedAt + 1)
+    val result = mapWith(tombstone)
+    assertEquals(Desired.Absent, result.desired[single.uuid])
+    assertEquals(0, result.stats.outOfWindow)
+  }
+
+  @Test
   fun m14MissingParentLeavesTheOverrideStandalone() {
     val result = map(events.filterNot { it.uuid == WEEKLY })
     assertTrue(result.desired[MOVED] is Desired.Write)
