@@ -15,6 +15,9 @@ import kotlinx.serialization.json.jsonObject
  * - `real-20261112/`: the sanitized raw dump of the TimeTree test events (ids, calendar and author
  *   replaced; titles, texts and timestamps kept). Taken on 2026-11-12 in Europe/Berlin.
  * - `synthetic/`: hand-made events in the same page shape, one uuid per test case (`m01-…`).
+ * - `rename/`: a synthetic pair modelled on the label rename of 2026-11-12: the labels before and
+ *   after two of them were renamed (same ids and colours, names and order changed) and the events,
+ *   which a rename does not change.
  */
 internal object MappingFixtures {
   val TODAY: LocalDate = LocalDate.of(2026, 11, 12)
@@ -53,7 +56,8 @@ internal object MappingFixtures {
     labels: Map<Long, TtLabel> = emptyMap(),
     today: LocalDate = TODAY,
     zone: ZoneId = BERLIN,
-  ): MappingResult = DefaultEventMapper().map(MappingInput(events, labels, today, zone))
+    filter: EventFilter? = null,
+  ): MappingResult = DefaultEventMapper().map(MappingInput(events, labels, today, zone, filter))
 
   fun berlin(y: Int, mo: Int, d: Int, h: Int = 0, mi: Int = 0, s: Int = 0): Long =
     ZonedDateTime.of(y, mo, d, h, mi, s, 0, BERLIN).toInstant().toEpochMilli()

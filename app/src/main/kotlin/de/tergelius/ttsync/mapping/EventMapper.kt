@@ -19,6 +19,13 @@ import java.util.TreeMap
  *   when the uuid cannot be put in a [Marker]; real uuids are 32 hex characters).
  * - **Absent** for birthdays (`type 1`), memos (`category 2`) and deactivated events (including
  *   override tombstones) that are inside the window.
+ * - **Filter.** A live, in-window event that [MappingInput.filter] does not match is also
+ *   [Desired.Absent], counted in [MappingStats.filtered] and listed in [MappingResult.filtered].
+ *   The filter is checked last, so tombstones, the window, birthdays and memos behave as without
+ *   one. Every event is judged on its own fields: if a series matches but an edited occurrence
+ *   does not, that occurrence is simply missing (the series keeps its EXDATE for it); if the
+ *   series does not match but an occurrence does, only that occurrence is copied, standalone like
+ *   an override whose parent is missing.
  * - **Window.** An event whose `endAt` is before [windowStartMillis] is left out of the map, so its
  *   copy is never touched. Open-ended series and `COUNT` series (end unknown) have
  *   `endAt = Long.MAX_VALUE` and are always in the window.
@@ -65,6 +72,8 @@ data class MappingInput(
   val today: LocalDate,
   /** The device's time zone, used for [EventMapper.windowStartMillis]. */
   val zone: ZoneId,
+  /** The calendar's filter; null (or an empty filter) copies every event. */
+  val filter: EventFilter? = null,
 )
 
 /** What a copy should look like. */
@@ -86,12 +95,19 @@ data class MappingResult(
   /** Override or tombstone uuid → parent uuid, for overrides whose parent is in the input. */
   val parentOf: Map<String, String>,
   val stats: MappingStats = MappingStats(),
+  /**
+   * Live, in-window events that the filter excludes; each is [Desired.Absent] in [desired]. The
+   * engine needs them apart from other Absent uuids for the leftover cleanup and `filterImpact`.
+   */
+  val filtered: Set<String> = emptySet(),
 )
 
 /** Counters that go into `SyncReport`. */
 data class MappingStats(
   /** Birthdays and memos. */
   val skipped: Int = 0,
+  /** Live, in-window events the filter excludes ([MappingResult.filtered]). */
+  val filtered: Int = 0,
   /** Events left out because they ended before the window. */
   val outOfWindow: Int = 0,
   /**
@@ -128,6 +144,7 @@ class DefaultEventMapper : EventMapper {
   override fun map(input: MappingInput): MappingResult {
     val windowStart = EventMapper.windowStartMillis(input.today, input.zone)
     val events = newestByUuid(input.events)
+    val filter = input.filter?.takeUnless { it.isEmpty }
 
     val parentOf = LinkedHashMap<String, String>()
     val children = HashMap<String, MutableList<TtEvent>>()
@@ -138,6 +155,7 @@ class DefaultEventMapper : EventMapper {
     }
 
     val desired = LinkedHashMap<String, Desired>()
+    val filtered = LinkedHashSet<String>()
     var skipped = 0
     var outOfWindow = 0
     var dropped = 0
@@ -156,11 +174,19 @@ class DefaultEventMapper : EventMapper {
           skipped++
           desired[event.uuid] = Desired.Absent
         }
+        // Last, so everything above behaves as without a filter. Its recurrence lines and
+        // overrides are not counted: there is no copy they could affect.
+        filter != null && !filter.matches(event) -> {
+          filtered += event.uuid
+          desired[event.uuid] = Desired.Absent
+        }
         else -> {
           val recurrence = shape.recurrence
           if (recurrence != null) {
             dropped += recurrence.droppedLines
             if (shape.isSeries) {
+              // All children, filtered ones included: an occurrence that is not copied still
+              // needs the series' EXDATE, or the series would show it at its original time.
               val (tombstones, overrides) = children[event.uuid].orEmpty().partition { it.isDeactivated }
               unmatched += resolver.resolve(recurrence.exdates, overrides, tombstones).unmatched
             }
@@ -179,7 +205,9 @@ class DefaultEventMapper : EventMapper {
           outOfWindow = outOfWindow,
           droppedRecurrenceLines = dropped,
           unmatchedOverrides = unmatched,
+          filtered = filtered.size,
         ),
+      filtered = filtered,
     )
   }
 
