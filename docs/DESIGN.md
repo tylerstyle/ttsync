@@ -6,7 +6,8 @@
 
 This document was written as the v1 implementation plan and records why things are the way they are.
 Later fixes were folded in (device test results in [DEVICE-TESTS.md](DEVICE-TESTS.md)), but class
-lists and phase notes reflect the plan: where the code differs in naming, the code wins.
+lists and phase notes reflect the plan: where the code differs in naming, the code wins. Version
+0.2.0 added event filters per calendar (section 4a).
 
 Status: plan of 2026-11-12, revised the same day after the design review
 ([reviews/design-agy.md](reviews/design-agy.md), outcomes in section 14). Everything here was decided
@@ -31,11 +32,16 @@ v1 does:
   (section 5). "Sync now" runs at any time.
 - Show a status screen, a failure notification and a reliability checklist. Sign-out can remove the copies.
 - English (default) and German.
+- Since 0.2.0: per selected calendar, an optional filter that copies only some of its events, by
+  label, attendee or words (section 4a). No filter copies everything, as before.
 
 Not in v1:
 - Writing to TimeTree.
 - Social-login accounts (the README has a workaround), cookie paste, WebView login, CSRF fallback.
-- Comments, attachments, attendees, colours, reminders.
+- Comments, attachments, reminders. Attendees and colours are not written to the copies (since
+  0.2.0 labels and attendees can choose which events are copied).
+- Filters (0.2.0): no Google event colours, no virtual members (child, pet, car, other) as
+  attendees (no sample data), no patterns or regular expressions.
 - Non-Google target calendars, OAuth/REST, any server, root, accessibility or notification capture.
 - Two-way sync: an edit to a copy lasts until the TimeTree event changes.
 
@@ -47,12 +53,12 @@ Packages under `de.tergelius.ttsync`. Keep the template's `MainActivity`, `ui/th
 | Package | Classes |
 |---|---|
 | `timetree` | `TimeTreeClient`, `@Serializable` DTOs, `TtError`, `RequestPacer`, `RawResponseSink` |
-| `mapping` | `EventMapper`, `EventSpec`, `RecurrenceNormalizer`, `OverrideResolver`, `Marker`, `SpecHash` |
+| `mapping` | `EventMapper`, `EventSpec`, `RecurrenceNormalizer`, `OverrideResolver`, `Marker`, `SpecHash`; 0.2.0: `EventFilter`, `LabelNames` |
 | `sync` | `SyncEngine`, `SyncReport`, `SyncWorker`, `SyncScheduler`, `SyncNotifier` |
 | `store` | `SyncDb` (framework `SQLiteOpenHelper`), `SnapshotStore`, `MappingStore` |
 | `calendar` | `CalendarGateway`, `ProviderCalendarGateway`; `FakeCalendarGateway` (tests) |
 | `settings` | `SettingsRepository`, `StatusRepository` (DataStore), `CredentialStore` |
-| `ui` | `login`, `sources`, `target`, `status`, `reliability`, `settings`, `about` + ViewModels |
+| `ui` | `login`, `sources` (0.2.0: with the filter editor), `target`, `status`, `reliability`, `settings`, `about` + ViewModels |
 | root | `App` (notification channels), `AppGraph` (manual DI, no Hilt) |
 
 `timetree`, `mapping` and `SyncEngine` don't import `android.*`, so plain JVM tests cover them.
@@ -229,6 +235,86 @@ parent's `_ID`.
 **Hash.** SHA-256 over `MAPPER_VERSION` and the sorted `EventSpec` fields. Write only when it changes.
 Bumping the version rewrites every row once.
 
+## 4a. Filters (0.2.0)
+
+Each selected TimeTree calendar can have a filter that decides which of its events are copied
+(`mapping/EventFilter`, stored as `SourceCalendar.filter`). No filter, or one with nothing set,
+copies every event, as 0.1.x did. The owner decided the rules on 2026-11-12.
+
+**Criteria.**
+- **Labels:** the event's `label_id` is one of the chosen labels. An event without a label never
+  matches a label filter.
+- **Attendees:** one of the event's `attendees` (user ids) is one of the chosen members. TimeTree
+  calls them "Attendees" on an event and "Members" on the calendar (`calendar_users`, embedded in
+  `GET /calendars`, so no extra request).
+- **Words:** "Only if it contains …" and "Skip if it contains …", each a list of terms (separated
+  by commas in the UI). A term matches if the title, the note or the location contains it,
+  ignoring case; both sides are NFC-normalized, terms are trimmed and blank ones dropped.
+
+**Combining.** An empty criterion restricts nothing. Criteria combine with AND, the values within
+one criterion with OR (any of the labels, any of the members, any of the words). A skip word always
+wins.
+
+**Labels by id, never by name.** Users rename labels, and a rename changes only the label's `name`
+(API check of 2026-11-12: ids, colours and the events' `label_id` and `updated_at` stay the same),
+so a filter survives it. The UI always shows the current name. TimeTree shows an unnamed label
+(`name: ""`) by the name of its colour, keyed by colour, not by id; labels can be recoloured, so
+`LabelNames` reads the colour from the label (`color`, else `default_color`) and knows TimeTree's 25
+colour names (bug B3):
+- the filter editor: the name, else the colour's name in the phone's language (English or German,
+  as TimeTree's German app: the ten default colours keep their English names), else "Label <id>";
+- a copy's `Label:` line: the name, else the **English** colour name, else no line. English on
+  purpose, so the copy and its hash don't depend on the phone's language. A renamed label reaches
+  the copies with their next FULL run, because a rename doesn't change the events.
+
+**Where the filter applies.** The mapper checks it last, after tombstones, the window, deactivated
+events, birthdays and memos, so those behave exactly as without a filter. A live, in-window event
+the filter excludes is `Absent` and counted as `filtered` (`SyncCounts.filtered`, "Filtered N" on
+Status).
+
+**Edited occurrences.** Every event is judged on its own fields: an edited occurrence (override) has
+its own label, attendees and title.
+- The series matches, the occurrence doesn't: that occurrence is simply missing. The series is
+  resolved as for any edited occurrence (section 4): its EXDATE removes the original date, and a
+  filtered override still counts towards `unmatchedOverrides` when it can't be matched.
+- The series doesn't match, the occurrence does: only that occurrence is copied, as a standalone
+  event, like an override whose parent is missing.
+
+**Changing a filter.**
+- The settings hold the filter; the sync state holds only its fingerprint (`cursor.filter_hash`, a
+  SHA-256 of a canonical form), so no search terms are stored in clear text in SQLite.
+- A different fingerprint makes that calendar's next run FULL ("filter changed"): copies of newly
+  excluded events must go and newly included events must be copied, whether they changed or not.
+  The hash is stored with the cursor only after that calendar's writes succeeded, so a failed run
+  tries FULL again. Saving a changed filter also starts a FULL "Sync now". An equivalent filter
+  (same ids, the same terms in another order) forces nothing.
+- Before saving a filter that would delete copies, Sources asks "N copies no longer match and will
+  be removed from <target>." N comes from `SyncEngine.filterImpact`: read-only, it maps the stored
+  snapshots with the new filter and counts the in-window mapped copies in the current target that
+  it would exclude (unmapped leftovers are not counted). There is no question when N is 0, and the
+  question is merged with the one for deselected calendars.
+- A filtered copy is deleted by the diff like any `Absent` event: only if it is mapped, in the window
+  and its calendar is active (section 5, step 5). A paused calendar's copies are never touched by
+  its filter. A copy that ended before the window stays.
+
+**Leftover cleanup.** After a reinstall or lost mappings, the copies of excluded events have no
+mapping, so the diff can't delete them. The adoption scan (section 5, step 6) deletes such a marked
+row with an R1-verified delete when its uuid is live, in the window and excluded by the filter of
+its active calendar. Rows of unknown, dead, paused or out-of-window uuids are still left alone. This
+changes the BLOCKER-2 decision of the design review (section 14); the owner approved it on
+2026-11-12.
+
+**Lenient decoding.** The fields only the filters use (a label's colours and order, a calendar's
+members, an event's attendees and author) decode leniently: a value that doesn't decode becomes
+null, and a list keeps the elements that do. A strict field in an unexpected shape would mark the
+event as malformed and skip it for good, or fail `GET /calendars` with `ApiChanged` so that no run
+succeeds; neither is acceptable for data the copies hardly depend on. Labels cached by 0.1.x
+(`cursor.labels_json`) have no colours and decode too; the next FULL refreshes them.
+
+**Storage and downgrade.** A null filter is not written, so an unfiltered selection is stored byte
+for byte as in 0.1.x, and 0.1.x settings read as unfiltered. 0.1.x ignores the `filter` key, so going
+back to 0.1.x drops the filters and copies every event again.
+
 ## 5. Sync algorithm
 
 `FULL` runs on a calendar's first sync, after a mapper version bump, after the selection changes,
@@ -363,6 +449,25 @@ Status.
 1. **Login.** Shows these errors: rejected/blocked, rate-limited, offline. Hint: "Google/Apple sign-in
    won't work. Add a password in TimeTree or use a separate invited account."
 2. **Sources.** Checkboxes from `/calendars`, with the note "Only pick calendars whose owner agreed."
+   0.2.0: each selected calendar that TimeTree still lists has a line "Events: All ›", or its
+   filter's summary such as "Events: 2 labels · 1 person · 3 words · skips 1 word". It opens the
+   **filter editor** (section 4a) in place of the list, titled "Choose events":
+   - a short explanation: an empty section restricts nothing, sections combine (an event must
+     match all of them), and a word from "Skip if it contains" always wins;
+   - **Labels:** checkboxes in TimeTree's display order (`order`), each with a colour dot and the
+     current display name. The dot's accessibility description is the colour's name, unless the row
+     already shows it;
+   - **Attendees:** the calendar's members as checkboxes. A member who left the calendar is listed
+     only while the filter selects them, marked "Left the calendar"; so is an id TimeTree no
+     longer lists, so nothing in a filter is hidden;
+   - **Words:** "Only if it contains" and "Skip if it contains", several words separated by
+     commas, with a hint that they are searched in title, note and location, ignoring case;
+   - **Clear** (back to all events) and **Done**. Done and Back return to the list and keep the
+     edit as a draft; it is stored with the list's Save (Next during setup), so a filter can be
+     set before the first sync. A stored filter is kept unless the user edits it.
+
+   Save asks once for everything that would delete copies: the deselected calendars and "N copies
+   no longer match and will be removed from <target>." Nothing is asked when no copy would go.
 3. **Target.** Requests the calendar permission. Lists `com.google` calendars with access ≥ 500 and
    `SYNC_EVENTS=1`, each with "N other events stay untouched". Recommends a dedicated calendar; Refresh
    button. **Confirming the target enqueues an immediate FULL sync (`ttsync-now`) and the periodic work.**
@@ -378,7 +483,9 @@ Status.
      to Target).
    - Last successful sync, shown in red when it is more than 24 h ago, and the next run
      (`WorkInfo.nextScheduleTimeMillis`).
-   - Counts: added, updated, deleted, skipped, plus `unmatchedOverrides`.
+   - Counts: added, updated, deleted, skipped, plus `unmatchedOverrides`; 0.2.0: "Filtered N" when
+     filters left out events. The line "Copying … into …" marks filtered calendars, e.g.
+     "Family (filtered)".
    - Warnings: Google sync is off; N changes not uploaded to Google yet (section 5, step 1); battery is
      not unrestricted.
    - The error, with a fix button.
@@ -395,7 +502,8 @@ Status.
    - "Pause app activity if unused" (`IntentCompat.createManageUnusedAppRestrictionsIntent`);
    - `dontkillmyapp.com/<manufacturer>`;
    - standby bucket (diagnosis only).
-7. **Settings**: interval 1 h (default), 3 h or 6 h, never shorter, as owners were promised; Sources;
+7. **Settings**: interval 1 h (default), 3 h or 6 h, never shorter, as owners were promised; Sources
+   (the list marks filtered calendars);
    Target; Full resync; Remove all copies; Sign out. The adaptive FULL (section 5) keeps that promise:
    it never adds runs, and a run that reads a small calendar completely costs a few requests, the
    same order as an incremental one.
@@ -488,6 +596,28 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
   mapping table.
 - E15: a failed `withExpectedCount` precondition aborts the chunk, which is replayed one operation at a time.
 
+Filters (0.2.0, section 4a):
+- F1 (`EventFilterTest`): each criterion, AND between criteria and OR within one, skip wins, case
+  and Unicode normalization; the fingerprint ignores order and normalization; no search terms in
+  `toString` or the fingerprint.
+- F2 (`FilterMappingTest`): excluded events are `Absent`, counted and listed; tombstones, the
+  window, birthdays and memos behave as without a filter; the override rule both ways; a filtered
+  override still counts for its series.
+- F3 (`LabelNamesTest`, `LabelColorStringsTest`): TimeTree's 25 colours; the copy's line uses the
+  name, else the English colour name; every colour has an English and a German string.
+- F4 (`StoreCodecTest`, `SqlSyncDatabaseTest`): 0.1.x settings and reports decode, and unfiltered
+  sources stay byte-identical; schema 2 → 3 keeps every row and forces no FULL.
+- F5 (`SyncEngineFilterTest`): narrowing runs FULL once and deletes exactly the excluded copies;
+  widening copies them again; an equivalent filter forces nothing; a failed run keeps the old hash;
+  leftovers after lost mappings or a reinstall are deleted, while unknown, out-of-window and paused
+  rows are never touched; `filterImpact` is read-only and counts only in-window copies in the
+  current target; a renamed label keeps the filter. The random `SyncEngineSafetyTest` also changes
+  filters.
+- F6 (`FilterEditorStateTest`, `FilterSummaryTest`, `SourcesFilterTest`): the editor's order,
+  former members, toggling, clearing and normalizing; the summary; a filter set during setup is
+  stored before the first sync; filters survive the Sources save; the question comes only when
+  copies would go, and once together with deselected calendars.
+
 **On the device.** `A` stands for the adb command of the test phone, for example `adb -s <serial>`
 (or `ssh <host> adb -s <serial>` when the phone is connected to another machine), and `<target>` for
 the `_id` of the target calendar (`scripts/device-verify.sh -l` lists them). The test setup's target
@@ -528,6 +658,39 @@ calendar held 7 events of its own. `scripts/device-verify.sh` wraps steps 1, 5 a
     marked rows left, and the baseline is unchanged.
 14. **Release build.** Repeat steps 2–8 with the signed APK. Check the certificate with
     `apksigner verify --print-certs`.
+
+**Filters (0.2.0).** The test calendar needs events with different labels (one label renamed in
+TimeTree, one left unnamed), different attendees, a few words in titles, notes and locations, and
+a weekly series with one occurrence edited to another label. Take the step 1 baseline first; the
+target's own events must stay unchanged throughout (`scripts/device-verify.sh` fingerprint).
+
+15. **Update.** Install 0.2.0 over 0.1.1 (Obtainium or `A install -r`): sign-in, settings and copies
+    are kept, no setup step comes back, and the first run is a normal one. At the next FULL, the
+    copies of unnamed labels are updated once to a `Label: <English colour name>` line (B3); the
+    others are not rewritten.
+16. **Set a filter.** Settings → TimeTree calendars → "Events: All" → tick one label → Done → Save.
+    The dialog says "N copies no longer match and will be removed from <target>." with N = the
+    in-window copies with other labels. Confirm: a FULL run deletes exactly those, Status shows
+    "Filtered N", Settings and Status show the calendar as "(filtered)". Cancel instead: nothing
+    changes.
+17. **Criteria.** Attendees, "Only if it contains" and "Skip if it contains" (upper and lower case
+    mixed, two words separated by a comma), alone and combined: the copies follow section 4a. The
+    edited occurrence follows its own label (the series lacks it, or it is copied alone).
+18. **Rename and widen.** Rename the chosen label in TimeTree: the filter still applies, and the
+    next FULL writes the new name. Then Clear → Done → Save: no dialog, the copies come back.
+19. **Setup with a filter, leftovers.** Sign out keeping the copies, sign in again, set a filter on
+    the Sources step before choosing the target: the first sync copies only matching events, adopts
+    their old copies and deletes the old copies of excluded events (leftover cleanup); nothing else
+    in the target changes. `DROP_MAPPINGS` followed by a sync: the same result.
+20. **Screens.** The editor in English and German (German names for the 15 extra colours, English
+    for the ten defaults), with TalkBack (a label row reads its name, its colour and its state), the
+    system back gesture (returns to the list and keeps the edit), and a former member (listed only
+    while selected, "Left the calendar").
+21. **Relabelling.** Not verified by the API checks yet: whether relabelling an existing event, or
+    changing its attendees, changes its `updated_at`. Compare the event's `updated_at` in the raw
+    dumps (debug build) before and after. If it doesn't change, an INCREMENTAL run misses it and
+    the change reaches the copies with the next FULL: every run for a calendar of up to 3 pages, at
+    most 6 h for a larger one.
 
 ## 11. Release
 
@@ -584,7 +747,8 @@ Resolved:
   address, then Change password; then sign in with that email and password. It is in the README.
 - The repository is <https://github.com/tylerstyle/ttsync>.
 
-Still open: none for v1.
+Still open: none for v1. For 0.2.0: whether relabelling an event changes its `updated_at`
+(section 10, step 21).
 
 ## 14. Review resolution
 
@@ -608,3 +772,20 @@ From the design review ([reviews/design-agy.md](reviews/design-agy.md)), with th
 | NIT-2: target calendar deleted on the web | Accepted. Dedicated Status state with a button to Target. | 5 (step 1), 7 |
 | NIT-3: lib-recur too early | Covered by BLOCKER-4. Optional, decided by fixtures, not in phase 1. | 2 |
 | NIT-4: credentials file layout | Accepted. `[12-byte IV][ciphertext + 16-byte GCM tag]`. | 6 |
+
+### 0.2.0: filters
+
+The owner's decisions of 2026-11-12 (section 4a) and the choices made while building them; the code
+reviews of 0.2.0 get their own files in [reviews/](reviews/).
+
+| Topic | Decision | Where |
+|---|---|---|
+| BLOCKER-2 revisited | Leftover cleanup approved by the owner: the adoption scan also deletes unmapped rows of live, in-window events that an active calendar's filter excludes. Unknown, dead, paused and out-of-window rows stay untouched. | 4a, 5 (step 6), F5 |
+| Labels | By id, never by name; the UI shows the current name or the colour's name. | 4a, 7.2 |
+| B3 | Unnamed labels: the copies use the English colour name. No `EventMapper.VERSION` bump: only copies with unnamed labels are rewritten, at their next FULL. | 4, 4a |
+| New API fields | Decoded leniently, so a surprise in data the copies hardly need never skips an event or fails `GET /calendars`. | 4a |
+| `filterImpact` | Read-only and without the run lock, so the question isn't blocked by a running sync; it counts mapped copies only. | 4a |
+| Fingerprint | Keeps the terms' case: a case-only change of a term costs one extra FULL run. "filter changed" ranks after "no high-water mark" and "no FULL recorded" among the FULL reasons. | 4a, 5 |
+| Editing | The editor works on a draft that Sources saves with the selection, so one question covers deselected calendars and narrower filters, and a filter can be set during setup. Back keeps the edit, like Done; leaving Sources without Save drops it. | 7.2 |
+| Word lists | One text field per list, words separated by commas (a word can't contain a comma). | 7.2 |
+| Downgrade | 0.1.x ignores the filters and copies every event again (README). | 4a |

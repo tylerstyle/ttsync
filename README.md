@@ -22,6 +22,8 @@ The app is in English and German. [Deutsche Kurzfassung unten.](#deutsch)
   at any time.
 - Copies everything that ended at most 30 days ago or lies in the future. Older copies are left as
   they are.
+- Copies all events of a calendar, or only some of them: by label, attendee or words
+  ([Choose which events](#choose-which-events)).
 
 ## What it doesn't do
 
@@ -137,6 +139,39 @@ The app walks you through it:
 5. **Status:** allow notifications, so the app can tell you when syncing stops working. The first
    sync starts right away.
 
+## Choose which events
+
+By default the app copies every event of the calendars you ticked. To copy only some of them, tap
+**Events: All** under a calendar, either in step 2 of the setup or later in Settings → **TimeTree
+calendars**. You can choose:
+
+- **Labels:** only events with one of the ticked labels. Labels appear as in TimeTree: with their
+  colour and current name, or the name of their colour if they have none. Renaming a label in
+  TimeTree doesn't break the filter.
+- **Attendees:** only events that at least one of the ticked members attends. Someone who left the
+  calendar is listed only while ticked, so you can untick them.
+- **Words:** **Only if it contains** copies only events whose title, note or location contains one
+  of the words. **Skip if it contains** never copies an event with one of these words. Separate
+  several words with commas; upper and lower case don't matter.
+
+A section you leave empty doesn't restrict anything. If you fill in several sections, an event must
+match all of them, and a word under "Skip if it contains" always wins. Tap **Done**, then **Save**
+(or **Next** during setup). **Clear** goes back to all events.
+
+Examples:
+
+- Only work events: tick the label "Work".
+- Only what Alex attends, but not the cancelled events: tick Alex under Attendees and enter
+  `cancelled` under Skip if it contains.
+- Only trainings and matches: enter `training, match` under Only if it contains.
+
+If copies no longer match the new filter, the app says how many it will remove from your Google
+calendar before it saves; your own events are never touched. Events that match again are copied
+with the next sync. The calendar list in Settings and the Status screen mark a calendar with a filter
+as "(filtered)", and Status shows how many events the last sync left out ("Filtered").
+
+Going back to an older version (0.1.x) drops the filters: it copies every event again.
+
 ## Everyday use
 
 You don't need to open the app; it syncs in the background. The **Status** screen (the app's home
@@ -145,7 +180,8 @@ screen) shows:
 - whether syncing works ("Syncing normally", "Needs your attention", …), with a button to fix a
   problem;
 - the last successful sync (in red when it's more than 24 hours ago) and the next one;
-- what the last sync did: added, updated, deleted, skipped;
+- what the last sync did: added, updated, deleted, skipped, and how many events your filters left
+  out;
 - warnings, for example when Google sync is off or battery use is restricted;
 - **Sync now**, to sync right away. If the last sync was less than a minute ago, the app just tells
   you so.
@@ -266,8 +302,8 @@ app keeps its copies until you remove them (button on Status or in the notificat
 **Syncing stopped, or "Last successful sync" is red.** Go through [Keep it running](#keep-it-running).
 
 **An event is missing.** Birthdays and memos aren't copied, nor are events that ended more than 30
-days ago. Otherwise tap Sync now, and check that its calendar is ticked under Settings → TimeTree
-calendars.
+days ago or that the calendar's filter leaves out ("Events: …" under Settings → TimeTree
+calendars). Otherwise tap Sync now, and check that its calendar is ticked there.
 
 **My edit to a copy was undone, or a deleted copy came back.** That's expected: copying goes one way
 only, and TimeTree wins. Change the event in TimeTree instead, or untick the calendar.
@@ -348,6 +384,17 @@ nicht. Nutzung auf eigenes Risiko. Kopiere nur Kalender, deren Besitzer zugestim
   einen eigenen, z. B. „TimeTree“, auf calendar.google.com anlegen), Akkunutzung
   „Uneingeschränkt“ erlauben, Benachrichtigungen erlauben. Die erste Synchronisierung startet
   sofort.
+- **Nur bestimmte Termine kopieren:** Unter einem Kalender auf „Termine: Alle“ tippen (bei der
+  Einrichtung oder später unter Einstellungen → TimeTree-Kalender). Wählbar sind **Labels** (wie in
+  TimeTree mit Farbe und aktuellem Namen; Umbenennen in TimeTree schadet dem Filter nicht),
+  **Teilnehmer** und **Wörter**: „Nur, wenn er enthält“ und „Überspringen, wenn er enthält“,
+  mehrere Wörter mit Kommas getrennt, gesucht in Titel, Notiz und Ort, ohne auf Groß- und
+  Kleinschreibung zu achten. Ein leerer Abschnitt schränkt nichts ein, mehrere Abschnitte müssen
+  alle passen, und ein Wort unter „Überspringen“ gewinnt immer. Beispiel: nur Termine mit dem Label
+  „Arbeit“, aber keine mit `abgesagt`. Mit „Fertig“ und dann „Speichern“ übernehmen,
+  „Zurücksetzen“ kopiert wieder alles. Fallen dadurch Kopien weg, nennt die App vorher ihre Zahl.
+  Zurück zu einer älteren Version (0.1.x): Die Filter entfallen, alle Termine werden wieder
+  kopiert.
 - **Im Alltag:** Der Status-Bildschirm zeigt die letzte erfolgreiche Synchronisierung (rot nach mehr
   als 24 Stunden) und hat „Jetzt synchronisieren“. Synchronisiert wird stündlich (wahlweise alle 3
   oder 6 Stunden). Gelöschte Termine verschwinden bei kleinen Kalendern mit der nächsten

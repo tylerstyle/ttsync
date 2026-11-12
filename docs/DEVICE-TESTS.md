@@ -102,7 +102,7 @@ adb, the way a user who downloaded it from the releases page has it, and then ad
 | F4 | Info | A second "Sync now" within 60 s was queued as delayed, non-expedited work. With the app in the background it waited until the app came back to the foreground. | Fix round 1: "now" work is always expedited and never delayed; a "Sync now" within 60 s of a successful run queues nothing and Status says "Synced N s ago". Verified in run 2 through the debug receiver; the UI note is R1. |
 | R1 | Low | The "Synced N s ago" snackbar never showed: Status cleared the note, which was its `LaunchedEffect` key, before `showSnackbar`, so Compose cancelled the effect. | Fix round 2: the note is a one-off `SyncedNote` with an id, consumed only after `showSnackbar` returns; a newer note is never cleared by an older one (`StatusViewModelTest`). Verified in run 3. |
 | O1 | Low | Right after a run, "Last successful sync" read "(In 0 minutes)": Status's clock ticks once a minute, so a run that finished after the last tick lay in its future. | 0.1.1: Status takes the newer of the clock and the last success as "now" (`StatusViewModelTest`). Verified in run 4. |
-| B3 | Low, open | TimeTree's default labels have empty names (the apps localize them), so copies get no `Label:` line. | None yet: map the default label ids to names, or document that only renamed labels appear. |
+| B3 | Low, fixed in 0.2.0, not yet verified on the device | TimeTree's default labels have empty names (the apps show them by the name of their colour), so copies get no `Label:` line. | 0.2.0: the copies' `Label:` line uses the label's name, else the English name of its colour (TimeTree's 25 colour names, by colour, not by label id). Copies with unnamed labels are rewritten once at their next FULL. The filter editor shows the same names, localized. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in
 local-time form, `WKST=MO`, default reminders); the app hashes what it writes, not what it reads
@@ -110,6 +110,12 @@ back, so this causes no rewrite loop. Adoption rewrites each adopted row once, b
 early periodic run is refused by WorkManager (F7), so only natural periodic runs can be observed.
 
 ## Not tested yet
+
+- **0.2.0 (event filters)**, all of [DESIGN.md](DESIGN.md) section 10, steps 15–21: the update from
+  0.1.1 with the B3 rewrite; setting, narrowing and widening a filter with the removal question and
+  "Filtered N"; each criterion and the rule for edited occurrences; a renamed label; a filter set
+  during setup and the leftover cleanup; the editor in English and German, with TalkBack and the
+  back gesture; whether relabelling an event changes its `updated_at`.
 
 - **Feeds of more than 3 pages** (about 300 events) on a real calendar: the high-water INCREMENTAL
   path and the 6-hour FULL ran only in unit tests. The test calendar always fit on one page.

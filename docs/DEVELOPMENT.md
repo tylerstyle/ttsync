@@ -48,8 +48,10 @@ Every change must keep these. Most of them have tests that fail if they break.
    left alone. Only explicit user actions (Remove all copies, sign-out with
    removal, changing the target) delete every marked row.
 5. **No secrets or personal data in logs, reports or the repo.** Logs carry counts, HTTP status,
-   error codes and 8-character uuid prefixes only. Raw API dumps exist only in debug builds and never
-   go into git (see [Raw dumps and fixtures](#raw-dumps-and-fixtures)).
+   error codes and 8-character uuid prefixes only. A filter's search terms are personal data too:
+   they stay out of logs and `toString`, and `SyncDb` stores only the filter's fingerprint. Raw API
+   dumps exist only in debug builds and never go into git (see
+   [Raw dumps and fixtures](#raw-dumps-and-fixtures)). Test fixtures use made-up names.
 6. **A pure core.** `timetree`, `mapping` and `sync/SyncEngine.kt` don't import `android.*`, so plain
    JVM tests cover them.
 
@@ -78,13 +80,13 @@ Packages under `de.tergelius.ttsync`:
 
 | Package | What it does | Main classes |
 |---|---|---|
-| `timetree` | Read-only client for TimeTree's web API: sign-in, calendars, labels, the paged event feed; errors; request pacing | `TimeTreeClient`, `OkHttpTimeTreeClient`, `EventFeed`, `Dtos`, `TtError`, `RequestPacer`, `RawResponseSink` |
-| `mapping` | Pure functions: TimeTree event → desired calendar row (`EventSpec`), time zones, all-day dates, recurrences, edited occurrences, the marker, the content hash | `EventMapper`, `EventSpec`, `RecurrenceNormalizer`, `OverrideResolver`, `TimeRules`, `Marker`, `SpecHash` |
+| `timetree` | Read-only client for TimeTree's web API: sign-in, calendars (with their labels and members), labels, the paged event feed; errors; request pacing; lenient decoding of the fields only filters use | `TimeTreeClient`, `OkHttpTimeTreeClient`, `EventFeed`, `Dtos`, `LenientSerializers`, `TtError`, `RequestPacer`, `RawResponseSink` |
+| `mapping` | Pure functions: TimeTree event → desired calendar row (`EventSpec`), time zones, all-day dates, recurrences, edited occurrences, the marker, the content hash; event filters and label names (0.2.0) | `EventMapper`, `EventSpec`, `RecurrenceNormalizer`, `OverrideResolver`, `TimeRules`, `Marker`, `SpecHash`, `EventFilter`, `LabelNames` (`LabelColor`) |
 | `store` | The app's own sync state in SQLite (framework, no Room): `snapshot`, `mapping`, `cursor`, `meta` | `SyncDatabase`, `SyncDb`, `SqlSyncDatabase`, `SyncSchema`, `SqlConnection` |
 | `calendar` | The only code that touches `CalendarContract`; enforces the marker rules | `CalendarGateway`, `ProviderCalendarGateway`, `GatewayRules` |
 | `sync` | The sync algorithm, the report, WorkManager scheduling and the worker, notifications | `SyncEngine`, `SyncReport`, `SyncScheduler`, `WorkManagerSyncScheduler`, `SyncWorker`, `SyncNotifier` |
-| `settings` | User choices and status in DataStore; encrypted credentials (Android Keystore, AES-256-GCM); the TimeTree session | `SettingsRepository`, `StatusRepository`, `AndroidStores`, `CredentialStore`, `KeystoreCredentialStore`, `StoredSessionStore` |
-| `ui` | Compose screens and ViewModels: `login`, `sources`, `target`, `reliability` (keep-running step and checklist), `status`, `settings`, `about`, plus `common` and `theme` | `MainViewModel`, `AppViewModelFactory`, `UserActions`, `DeviceChecks` |
+| `settings` | User choices (the selected calendars with their filters) and status in DataStore, as JSON through a pure codec; encrypted credentials (Android Keystore, AES-256-GCM); the TimeTree session | `SettingsRepository`, `StatusRepository`, `AndroidStores`, `StoreCodec`, `CredentialStore`, `KeystoreCredentialStore`, `StoredSessionStore` |
+| `ui` | Compose screens and ViewModels: `login`, `sources` (with the filter editor), `target`, `reliability` (keep-running step and checklist), `status`, `settings`, `about`, plus `common` and `theme` | `MainViewModel`, `AppViewModelFactory`, `UserActions`, `DeviceChecks`; filters: `sources/FilterEditorState`, `FilterEditorScreen`, `FilterSummary`, `FilterText` |
 | `debug` (`src/debug` only) | adb hooks for testing; not in release builds | `DebugReceiver` |
 | root | Application, manual dependency injection (no Hilt), activity, Navigation 3 setup, logging | `App`, `AppGraph`, `MainActivity`, `Navigation`, `NavigationKeys`, `TtLog` |
 
@@ -96,7 +98,8 @@ SyncWorker (WorkManager: "ttsync-periodic" or "ttsync-now")
        1. preconditions: calendar permission, target calendar unchanged and writable, credentials
        2. TimeTreeClient: GET /calendars, labels, then each calendar's event feed
        3. store: snapshot of every live event (raw JSON) per calendar
-       4. EventMapper: desired EventSpec (or Absent) per event, inside the 30-day window
+       4. EventMapper: desired EventSpec (or Absent) per event, inside the 30-day window;
+          Absent also for events the calendar's filter excludes (0.2.0)
        5. diff: SpecHash against the mapping table → insert / verified update / verified delete
           (adoption scan first in FULL runs, after a crash, or with an empty mapping table)
        6. CalendarGateway.applyBatch in chunks of 50, then mappings in one SQLite transaction
@@ -115,13 +118,23 @@ INCREMENTAL with a FULL at least every 6 hours (`SMALL_FEED_PAGES`, `FULL_INTERV
 one marked row without a mapping, which the next run adopts. The cursor only moves after the
 writes succeeded. Bumping `EventMapper.VERSION` rewrites every copy once.
 
+**Filters (0.2.0).** Each selected calendar can have an `EventFilter` (labels by id, attendees,
+words; DESIGN.md section 4a), stored with the selection in the settings (`SourceCalendar.filter`;
+none means every event, stored exactly as 0.1.x stored it). The mapper applies it last. Its
+fingerprint in `cursor.filter_hash` tells the engine when the filter changed, which forces one FULL
+run of that calendar, and the adoption scan deletes leftover copies of excluded events. On the
+Sources screen, each selected calendar's "Events: …" line opens the filter editor;
+`SyncEngine.filterImpact` counts the copies a narrower filter would delete, for the question before
+saving.
+
 **UI.** `MainViewModel` picks the start screen from the setup progress: Login → Sources → Target →
 Keep running → Status. `Navigation.kt` holds the Navigation 3 back stack. ViewModels come from
 `AppViewModelFactory` (manual DI from `AppGraph`) and call `UserActions` for multi-step actions such as
 sign-out or a target change, so every screen runs those steps in the same order.
 
 **Storage.** `SyncDb` (SQLite, schema version 3) holds snapshots, mappings, cursors and meta
-values. DataStore holds settings and status. Credentials are encrypted into
+values. Schema 3 (0.2.0) added `cursor.filter_hash`; the upgrade from 2 keeps every row and forces
+no FULL run. A downgrade recreates the tables, so the next run adopts the copies again. DataStore holds settings and status. Credentials are encrypted into
 `noBackupFilesDir/credentials.enc`. Backups are off for the whole app.
 
 ## Tech stack
@@ -177,11 +190,11 @@ The unit tests run on the JVM, without an emulator:
 | Area | Tests | How |
 |---|---|---|
 | `timetree` | sign-in, cookies, paging, error mapping, pacing, DTO decoding | OkHttp `mockwebserver3`, JSON fixtures in `src/test/resources/fixtures/timetree/` |
-| `mapping` | every mapping rule (DESIGN.md M1–M20), recurrences, edited occurrences, hash stability | synthetic fixtures and anonymized real dumps in `fixtures/mapping/` |
+| `mapping` | every mapping rule (DESIGN.md M1–M20), recurrences, edited occurrences, hash stability, filters and label names (F1–F3) | synthetic fixtures and anonymized real dumps in `fixtures/mapping/` |
 | `store` | schema, migrations, every store query | the same SQL on `sqlite-jdbc` through `JdbcSqlConnection` |
 | `calendar` | "is this row ours", target calendar checks | `GatewayRules` is pure Kotlin |
-| `sync` | the engine (DESIGN.md E1–E15), safety, scheduling plans, reports | `FakeCalendarGateway` with foreign rows in the target calendar, sharing `GatewayRules` with the real gateway |
-| `settings`, `ui` | credential store logic, ViewModels, user actions, checklist | fakes from `ui/UiFakes.kt` |
+| `sync` | the engine (DESIGN.md E1–E15), filters (F5), safety, scheduling plans, reports | `FakeCalendarGateway` with foreign rows in the target calendar, sharing `GatewayRules` with the real gateway |
+| `settings`, `ui` | credential store logic, the settings codec (0.1.x compatibility), ViewModels, user actions, checklist, the filter editor (F6), that every label colour has an English and a German name | fakes from `ui/UiFakes.kt`; the string files are read as XML |
 
 There are no instrumented tests (`androidTest`) yet. The calendar provider, WorkManager and the
 Keystore are covered by the device checklist instead (next sections).
@@ -239,7 +252,8 @@ To turn real API responses into test fixtures:
 
 Unit tests can't cover the calendar provider, Google's sync adapter, WorkManager on a real phone or
 OEM battery managers. Before a release, run the device checklist in DESIGN.md section 10 (steps
-0–14). [DEVICE-TESTS.md](DEVICE-TESTS.md) records the runs so far and what is still untested.
+0–14, and 15–21 for the filters of 0.2.0). [DEVICE-TESTS.md](DEVICE-TESTS.md) records the runs so
+far and what is still untested.
 
 - Use a test TimeTree calendar and a separate Google calendar while developing.
 - Sign in on the phone itself. Never send the TimeTree password over adb.
