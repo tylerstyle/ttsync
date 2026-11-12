@@ -148,7 +148,8 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
 - **The 0.2.0 release build as an update over 0.1.1 through Obtainium** ([DESIGN.md](DESIGN.md)
   section 10, step 15, with the release APK): runs after the release.
 - **The layout fixes L1–L5** of the 0.2.0 fix round.
-
+- **TalkBack** on the new screens: the "Choose events" action of the events line, the label rows
+  (colour name only when the row doesn't show it already) and the checkbox rows.
 - **Feeds of more than 3 pages** (about 300 events) on a real calendar: the high-water INCREMENTAL
   path and the 6-hour FULL ran only in unit tests. The test calendar always fit on one page.
 - **A failure notification while notifications are denied**: run 3 checked the warning on Status
