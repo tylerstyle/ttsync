@@ -1,6 +1,7 @@
 package de.tergelius.ttsync.sync
 
 import android.content.Context
+import androidx.concurrent.futures.await
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -26,7 +27,6 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -35,7 +35,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 
 /**
  * [SyncScheduler] on WorkManager (DESIGN.md section 9).
@@ -223,13 +222,22 @@ class WorkManagerSyncScheduler(
 
   /**
    * Turns the follow-ups waiting behind a running sync into FULL runs in place, keeping their place
-   * in the chain (`WorkManager.updateWork`). False if one could not be updated any more (it started
-   * or finished meanwhile).
+   * in the chain (`WorkManager.updateWork`). False if one could not be updated any more: it started
+   * or finished meanwhile, or was pruned, which fails the future ("Worker with id doesn't exist").
+   * The caller then appends a new FULL run. Suspends instead of blocking a thread (review fix1,
+   * NIT-2).
    */
   private suspend fun upgradeToFull(ids: List<UUID>, trigger: SyncTrigger): Boolean =
     ids.all { id ->
-      val update = workManager.updateWork(nowWork(full = true, trigger, id = id))
-      val result = withContext(Dispatchers.IO) { update.get() }
+      val result =
+        try {
+          workManager.updateWork(nowWork(full = true, trigger, id = id)).await()
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          log.d("scheduler: follow-up not updated: ${e.javaClass.simpleName}")
+          null
+        }
       result == WorkManager.UpdateResult.APPLIED_IMMEDIATELY
     }
 

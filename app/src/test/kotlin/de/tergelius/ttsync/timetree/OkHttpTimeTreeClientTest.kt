@@ -389,6 +389,25 @@ class OkHttpTimeTreeClientTest {
   }
 
   @Test
+  fun malformedEntriesTheSecondPassReadsAgainCountAndLogOnce() = runTest {
+    // Review fix1, NIT-1: the second pass of a multi-page FULL re-reads the top page.
+    val noUuid = """{"title":"x","updated_at":${at(35)}}"""
+    val brokenLive = """{"uuid":"bbbbbbbbbbbb","all_day":false,"updated_at":${at(32)}}"""
+    server.enqueue(response(feedPage(true, 30, ev("a", 40), noUuid, brokenLive, ev("b", 30))))
+    server.enqueue(response(feedPage(false, 10, ev("c", 10))))
+    server.enqueue(response(feedPage(true, 30, ev("a", 40), noUuid, brokenLive, ev("b", 30))))
+
+    val result = client.events(7, stopAt = null)
+
+    assertEquals(3, result.pages)
+    assertEquals(setOf("a", "b", "c"), result.events.map { it.event.uuid }.toSet())
+    assertEquals(setOf("bbbbbbbbbbbb"), result.skippedUuids)
+    assertEquals(2, result.skippedMalformed) // not 3: the entry without a uuid is the same one
+    assertEquals(1, log.lines.count { it.endsWith("skipped malformed event without uuid") })
+    assertEquals(1, log.lines.count { it.endsWith("skipped malformed event bbbbbbbb") })
+  }
+
+  @Test
   fun newestOccurrenceDecidesBetweenGoodAndMalformed() = runTest {
     val broken = { uuid: String, minutes: Int ->
       """{"uuid":"$uuid","all_day":false,"updated_at":${at(minutes)}}"""

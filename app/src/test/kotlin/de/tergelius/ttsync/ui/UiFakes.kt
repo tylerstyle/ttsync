@@ -163,7 +163,7 @@ class FakeScheduler(private val calls: Calls) : SyncScheduler {
 
 /**
  * Like the real engine for what the UI relies on: [removeAllCopies] with `stopSyncing` empties the
- * selection before deleting, [deselect] changes it only after the deletes went through. A failure
+ * selection and [deselect] shrinks it, both only after the deletes went through. A failure
  * ([removalFailure]) comes back in the report, as the engine does.
  */
 class FakeEngine(private val calls: Calls, private val settings: FakeSettings? = null) : SyncEngine {

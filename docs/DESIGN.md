@@ -251,10 +251,11 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (small feed, pages=1)` 
    `requestSync` does nothing) for an account the app cannot see, and the Google account usually is not
    visible to the app (device test B2). So the account switch counts only if the account is in
    `AccountManager.getAccountsByType("com.google")`; otherwise it is unknown and gives no warning.
-   Instead, the run counts the mapped copies written more than 30 min ago (`mapping.written_at`) that
-   are still `dirty = 1`. If there are any (and sync is not known to be off), Status warns "N changes
-   not uploaded to Google yet" and the checklist marks the item. A provider that does not show `dirty`
-   gives no signal and no failure.
+   Instead, at its end (after step 8, also when a later step failed) the run counts the mapped copies
+   written more than 30 min ago (`mapping.written_at`) that are still `dirty = 1`; counted at the end,
+   copies the run deleted or rewrote do not count as stale. If there are any (and sync is not known to
+   be off), Status warns "N changes not uploaded to Google yet" and the checklist marks the item. A
+   provider that does not show `dirty` gives no signal and no failure.
 2. **Crash check.** If `meta.run_in_progress` is still set, this run includes the adoption scan (step
    6) even when it is INCREMENTAL. Then set the flag.
 3. **Fetch.** Call `GET /calendars` and mark lost calendars. Fetch each active calendar's feed from the

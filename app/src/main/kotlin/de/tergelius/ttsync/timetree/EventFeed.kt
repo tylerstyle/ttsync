@@ -46,6 +46,13 @@ internal class EventFeed(
   private val versions = HashMap<String, Long>()
   private val skippedUuids = LinkedHashSet<String>()
   private var skippedWithoutUuid = 0
+
+  /**
+   * Malformed entries seen so far, by content. The second pass of a full read sees the top pages
+   * again; an entry seen twice is logged and, without a uuid, counted once (review fix1, NIT-1).
+   */
+  private val malformedSeen = HashSet<JsonObject>()
+
   private var pages = 0
   private var used = false
 
@@ -131,12 +138,15 @@ internal class EventFeed(
     }
     val uuid = (json["uuid"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
     val updatedAt = json.long("updated_at")
-    log.w(
-      "timetree: calendar $calendarId: skipped malformed event " +
-        (uuid?.let(TtLog::short) ?: "without uuid")
-    )
+    val firstSeen = malformedSeen.add(json)
+    if (firstSeen) {
+      log.w(
+        "timetree: calendar $calendarId: skipped malformed event " +
+          (uuid?.let(TtLog::short) ?: "without uuid")
+      )
+    }
     if (uuid == null) {
-      skippedWithoutUuid++
+      if (firstSeen) skippedWithoutUuid++
     } else {
       val deactivatedAt = json.long("deactivated_at")
       val version =

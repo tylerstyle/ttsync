@@ -808,6 +808,31 @@ class SyncEngineTest {
     assertEquals(setOf(SyncWarning.GOOGLE_SYNC_OFF), report.warnings)
   }
 
+  @Test
+  fun copiesTheRunDeletesOrRewritesAreNotCountedAsStale() = runTest {
+    // Review fix1, SHOULD-FIX-1: counted after the writes, not before them.
+    h.sync().assertOk()
+    h.now += 60 * 60_000L // all 4 copies are still dirty an hour later
+    h.client.deactivate(CAL_A, A1)
+    h.client.edit(CAL_A, A2) { it.copy(title = "Renamed") }
+    val report = h.sync().assertOk()
+    assertEquals(1, report.counts.deleted)
+    assertEquals(1, report.counts.updated)
+    assertEquals(2, report.notUploaded) // A3 and SERIES; A2's copy starts a new grace period
+    assertEquals(setOf(SyncWarning.NOT_UPLOADED), report.warnings)
+  }
+
+  @Test
+  fun aRunThatFailsAfterThePreconditionsStillReportsPendingUploads() = runTest {
+    h.sync().assertOk()
+    h.now += 60 * 60_000L
+    h.client.fail = { if (it.startsWith("events")) TtError.Transient(503) else null }
+    val report = h.sync()
+    assertEquals(SyncProblem.NETWORK, report.failure?.problem)
+    assertEquals(4, report.notUploaded)
+    assertTrue(SyncWarning.NOT_UPLOADED in report.warnings)
+  }
+
   // TimeTree errors -----------------------------------------------------------------------------
 
   @Test

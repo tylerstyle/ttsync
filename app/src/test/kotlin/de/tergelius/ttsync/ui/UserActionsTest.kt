@@ -166,17 +166,37 @@ class UserActionsTest {
     g.engine.removal = RemovalReport(deleted = 12, rejected = 1)
     val report = g.actions.removeAllCopies()
     assertEquals(12, report.deleted)
+    // The engine clears the selection itself; nothing deselects a second time (review fix1, NIT-3).
     assertEquals(
       listOf(
         "scheduler.cancelAll",
         "engine.removeAllCopies(15)",
-        "engine.deselect([1, 2])",
-        "settings.setSources([])",
+        "notifier.clearFailure",
+        "notifier.clearAccessLost(1)",
+        "notifier.clearAccessLost(2)",
       ),
-      g.calls.log.take(4),
+      g.calls.log,
     )
     assertEquals(SetupStep.SOURCES, g.actions.currentStep())
     assertEquals(target(15), g.settings.flow.value.target)
+  }
+
+  @Test
+  fun removeAllCopiesWithoutATargetOnlyClearsTheSelection() = runTest {
+    val g = UiTestGraph(settings = configured.copy(target = null), credentials = SIGNED_IN)
+    val report = g.actions.removeAllCopies()
+    assertTrue(report.succeeded)
+    assertEquals(
+      listOf(
+        "scheduler.cancelAll",
+        "engine.dropMappings",
+        "engine.deselect([1, 2])",
+        "settings.setSources([])",
+        "notifier.clearFailure",
+      ),
+      g.calls.log.take(5),
+    )
+    assertTrue(g.settings.flow.value.sources.isEmpty())
   }
 
   @Test
@@ -309,7 +329,7 @@ class UserActionsTest {
     val report = g.actions.removeAllCopies()
     assertTrue(report.succeeded)
     assertEquals(
-      listOf("scheduler.cancelAll", "engine.removeAllCopies(15)", "engine.deselect([1, 2])"),
+      listOf("scheduler.cancelAll", "engine.removeAllCopies(15)", "notifier.clearFailure"),
       g.calls.log.take(3),
     )
     assertTrue(g.settings.flow.value.sources.isEmpty())

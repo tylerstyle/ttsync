@@ -178,8 +178,8 @@ Google LLC.
 
 Kotlin, Jetpack Compose, no server. Build with `ANDROID_HOME=~/Android/Sdk ./gradlew assembleDebug`.
 Design and decisions: [docs/DESIGN.md](docs/DESIGN.md). Releases and signing:
-[docs/RELEASING.md](docs/RELEASING.md). Read-only device check of the target calendar:
-`scripts/device-verify.sh`.
+[docs/RELEASING.md](docs/RELEASING.md). On-device test runs: [docs/DEVICE-TESTS.md](docs/DEVICE-TESTS.md).
+Read-only device check of the target calendar: `scripts/device-verify.sh`.
 
 ## Deutsch
 

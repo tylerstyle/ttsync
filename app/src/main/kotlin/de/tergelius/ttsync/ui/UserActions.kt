@@ -231,23 +231,27 @@ class UserActions(
     val current = settings.current()
     scheduler.cancelAll()
     val target = current.target
+    val ids = current.sources.map { it.id }.toSet()
     val report =
       restoringOnFailure(current) {
         if (target != null) {
-          // The engine checks the target itself; one that was deleted has nothing to delete.
+          // The engine checks the target itself (one that was deleted has nothing to delete) and,
+          // once the deletes went through, clears the selection and the sync data (stopSyncing).
           withContext(io) { engine.removeAllCopies(target) }
         } else {
+          // No target, so no copies: only the selection and the sync data go.
           withContext(io) { engine.dropMappings() }
-          RemovalReport(deleted = 0, rejected = 0)
+          val deselected =
+            if (ids.isEmpty()) RemovalReport(deleted = 0, rejected = 0)
+            else withContext(io) { engine.deselect(ids) }
+          if (deselected.failure == null) settings.setSources(emptyList())
+          deselected
         }
       }
     if (report.failure != null) {
       restore(current)
       return report
     }
-    val ids = current.sources.map { it.id }.toSet()
-    if (ids.isNotEmpty()) withContext(io) { engine.deselect(ids) }
-    settings.setSources(emptyList())
     notifier.clearFailure()
     ids.forEach(notifier::clearAccessLost)
     return report

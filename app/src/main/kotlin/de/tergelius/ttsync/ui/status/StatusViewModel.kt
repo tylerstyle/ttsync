@@ -54,6 +54,13 @@ enum class StatusWarning {
   NOTIFICATIONS_OFF,
 }
 
+/**
+ * One-off note: "Sync now" needed no run, the last one succeeded [secondsAgo] s ago. Each tap gets
+ * a new [id], so two taps with the same text still show two snackbars, and clearing an old note
+ * never clears a newer one.
+ */
+data class SyncedNote(val id: Long, val secondsAgo: Long)
+
 data class StatusUiState(
   val loading: Boolean = true,
   val setupStep: SetupStep = SetupStep.DONE,
@@ -86,8 +93,8 @@ data class StatusUiState(
   val actionFailed: Boolean = false,
   /** "Remove copies" of paused calendars failed; they stay selected. */
   val removalFailed: Boolean = false,
-  /** One-off: "Sync now" needed no run, the last one succeeded this many seconds ago. */
-  val syncedSecondsAgo: Long? = null,
+  /** One-off "Synced N s ago" snackbar, until [StatusViewModel.onSyncedShown]. */
+  val syncedNote: SyncedNote? = null,
 ) {
   /** "Sync now" is pointless while a run is going on or about to start. */
   val canSyncNow: Boolean
@@ -205,8 +212,10 @@ class StatusViewModel(
     val removingPaused: Boolean = false,
     val actionFailed: Boolean = false,
     val removalFailed: Boolean = false,
-    val syncedSecondsAgo: Long? = null,
+    val syncedNote: SyncedNote? = null,
   )
+
+  private var lastNoteId = 0L
 
   private val stored =
     combine(settings.settings, status.status, scheduler.state) { s, st, sch -> Triple(s, st, sch) }
@@ -226,7 +235,7 @@ class StatusViewModel(
             removingPaused = d.removingPaused,
             actionFailed = d.actionFailed,
             removalFailed = d.removalFailed,
-            syncedSecondsAgo = d.syncedSecondsAgo,
+            syncedNote = d.syncedNote,
           )
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatusUiState())
@@ -274,15 +283,24 @@ class StatusViewModel(
         } catch (_: Exception) {
           null
         }
-      val ago = (result as? SyncNowResult.RecentlySynced)?.agoMillis?.let { it / 1000 }
+      val note =
+        (result as? SyncNowResult.RecentlySynced)?.let {
+          SyncedNote(id = ++lastNoteId, secondsAgo = it.agoMillis / 1000)
+        }
       dialogs.update {
-        it.copy(actionFailed = result == null, removalFailed = false, syncedSecondsAgo = ago)
+        it.copy(actionFailed = result == null, removalFailed = false, syncedNote = note)
       }
     }
   }
 
-  /** The "Synced N s ago" note was shown. */
-  fun onSyncedShown() = dialogs.update { it.copy(syncedSecondsAgo = null) }
+  /**
+   * The snackbar of note [id] is gone. The screen calls this only after `showSnackbar` returned:
+   * clearing the note first changed the screen's effect key, and Compose cancelled the effect
+   * before the snackbar showed (device retest R1). A newer note stays.
+   */
+  fun onSyncedShown(id: Long) = dialogs.update {
+    if (it.syncedNote?.id == id) it.copy(syncedNote = null) else it
+  }
 
   /** Calendar permission granted again from the Status fix button: sync right away. */
   fun onPermissionResult(granted: Boolean) {

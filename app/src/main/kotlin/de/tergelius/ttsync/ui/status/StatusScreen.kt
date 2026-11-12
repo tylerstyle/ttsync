@@ -103,11 +103,16 @@ fun StatusScreen(
   }
   val snackbar = remember { SnackbarHostState() }
   val resources = LocalResources.current
-  LaunchedEffect(state.syncedSecondsAgo) {
-    state.syncedSecondsAgo?.let { seconds ->
-      viewModel.onSyncedShown()
-      snackbar.showSnackbar(resources.getString(R.string.status_synced_recently, seconds))
-    }
+  val syncedNote = state.syncedNote
+  LaunchedEffect(syncedNote) {
+    if (syncedNote == null) return@LaunchedEffect
+    // Consumed only after the snackbar is gone (device retest R1): consuming it first changes this
+    // effect's key, and Compose cancels the effect, snackbar included. A newer note (another tap)
+    // also restarts the effect; the old snackbar goes and the new one shows.
+    snackbar.showSnackbar(
+      resources.getString(R.string.status_synced_recently, syncedNote.secondsAgo)
+    )
+    viewModel.onSyncedShown(syncedNote.id)
   }
 
   // POST_NOTIFICATIONS is asked here (DESIGN.md section 8), once per app start until granted;

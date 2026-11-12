@@ -137,6 +137,8 @@ dependencies {
 
   // Background sync, settings and status (sync/*, settings/*)
   implementation(libs.androidx.work.runtime)
+  // ListenableFuture.await() for WorkManager.updateWork (WorkManager's own await() is for Operation)
+  implementation(libs.androidx.concurrent.futures.ktx)
   implementation(libs.androidx.datastore.preferences)
 
   // Local tests: jUnit, coroutines, MockWebServer for the TimeTree client

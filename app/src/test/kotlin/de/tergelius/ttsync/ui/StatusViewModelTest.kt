@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -186,16 +187,42 @@ class StatusViewModelTest {
       StatusViewModel(g.settings, g.status, g.scheduler, g.gateway, g.deviceChecks, g.actions, flowOf(NOW))
     backgroundScope.launch(main.dispatcher) { vm.state.collect {} }
     vm.syncNow()
-    assertEquals(50L, vm.state.value.syncedSecondsAgo)
+    val note = vm.state.value.syncedNote!!
+    assertEquals(50L, note.secondsAgo)
     assertTrue(g.calls.log.none { it.startsWith("scheduler.runNow") })
-    vm.onSyncedShown()
-    assertNull(vm.state.value.syncedSecondsAgo)
+    vm.onSyncedShown(note.id)
+    assertNull(vm.state.value.syncedNote)
 
     // After a failed run, "Sync now" retries at once.
     g.status.flow.value = recent.copy(lastReport = report(failure = SyncFailure(SyncProblem.NETWORK)))
     vm.syncNow()
-    assertNull(vm.state.value.syncedSecondsAgo)
+    assertNull(vm.state.value.syncedNote)
     assertEquals("scheduler.runNow(full=false, MANUAL)", g.calls.log.last())
+  }
+
+  @Test
+  fun theSyncedNoteStaysUntilItsSnackbarWasShown() = runTest {
+    // Device retest R1: the screen consumes the note after showSnackbar returns. Each tap is a new
+    // note, even with the same text, and consuming an older one leaves the newer one alone.
+    val recent = SyncStatus(lastReport = report(), lastSuccessAt = NOW - 50_000)
+    val g =
+      UiTestGraph(settings = settings, status = recent, credentials = SIGNED_IN, device = okDevice)
+    val vm =
+      StatusViewModel(g.settings, g.status, g.scheduler, g.gateway, g.deviceChecks, g.actions, flowOf(NOW))
+    backgroundScope.launch(main.dispatcher) { vm.state.collect {} }
+    vm.syncNow()
+    val first = vm.state.value.syncedNote!!
+    vm.refresh() // other state changes keep the note
+    assertEquals(first, vm.state.value.syncedNote)
+
+    vm.syncNow() // a second tap while the first snackbar shows
+    val second = vm.state.value.syncedNote!!
+    assertEquals(first.secondsAgo, second.secondsAgo)
+    assertNotEquals(first.id, second.id)
+    vm.onSyncedShown(first.id)
+    assertEquals(second, vm.state.value.syncedNote)
+    vm.onSyncedShown(second.id)
+    assertNull(vm.state.value.syncedNote)
   }
 
   @Test

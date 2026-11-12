@@ -467,6 +467,9 @@ class DefaultSyncEngine(
     private var uploads = true
     private var unmanagedMarked = 0
     private var notUploaded = 0
+
+    /** The preconditions passed, so the run ends with the upload check ([checkUploads]). */
+    private var uploadCheckDue = false
     private lateinit var target: TargetCalendar
     private lateinit var zoneId: ZoneId
     private lateinit var today: LocalDate
@@ -501,6 +504,7 @@ class DefaultSyncEngine(
           log.e("run failed: ${e.javaClass.simpleName}")
           SyncFailure(SyncProblem.INTERNAL)
         }
+      if (uploadCheckDue) checkUploads()
       val report = report(failure)
       try {
         status.recordRun(report)
@@ -551,8 +555,7 @@ class DefaultSyncEngine(
           true
         }
       if (!uploads) warnings += SyncWarning.GOOGLE_SYNC_OFF
-      notUploaded = notUploaded(target) ?: 0
-      if (notUploaded > 0 && uploads) warnings += SyncWarning.NOT_UPLOADED
+      uploadCheckDue = true
       zoneId = zone()
       today = Instant.ofEpochMilli(startedAt).atZone(zoneId).toLocalDate()
       windowStart = EventMapper.windowStartMillis(today, zoneId)
@@ -617,18 +620,29 @@ class DefaultSyncEngine(
     }
 
     /**
+     * Sets [notUploaded] and the [SyncWarning.NOT_UPLOADED] warning at the end of the run, also of
+     * one that failed after the preconditions. At the end, copies this run deleted are gone and
+     * copies it rewrote start a new grace period, so neither counts as stale (review fix1,
+     * SHOULD-FIX-1).
+     */
+    private suspend fun checkUploads() {
+      notUploaded = notUploaded(target) ?: 0
+      if (notUploaded > 0 && uploads) warnings += SyncWarning.NOT_UPLOADED
+    }
+
+    /**
      * The upload signal (device test B2): copies the app wrote more than [UPLOAD_GRACE_MILLIS] ago
      * that are still `dirty`, i.e. Google's sync has not taken them. Null if unknown; it never fails
      * the run.
      */
     private suspend fun notUploaded(target: TargetCalendar): Int? {
       val cutoff = startedAt - UPLOAD_GRACE_MILLIS
-      val written =
-        db.mappings.all().filter { m ->
-          m.targetCalId == target.calendarId && m.writtenAt.let { it != null && it < cutoff }
-        }
-      if (written.isEmpty()) return 0
       return try {
+        val written =
+          db.mappings.all().filter { m ->
+            m.targetCalId == target.calendarId && m.writtenAt.let { it != null && it < cutoff }
+          }
+        if (written.isEmpty()) return 0
         val pending = gateway.pendingUploads(target, written.map { it.eventId })
         if (pending == null) log.d("upload state unknown: dirty not readable")
         else if (pending.isNotEmpty()) log.w("${pending.size} copies not uploaded after 30 min")
