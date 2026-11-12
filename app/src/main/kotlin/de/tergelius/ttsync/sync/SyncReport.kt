@@ -43,7 +43,10 @@ data class SyncCounts(
   val rejected: Int = 0,
   /** Overrides whose original instance could not be matched exactly (section 4, rule 3). */
   val unmatchedOverrides: Int = 0,
-  /** Marked rows left alone: unknown, dead, paused or out-of-window uuids (step 6). */
+  /**
+   * Marked rows left alone (step 6): unknown uuids, unmapped rows of dead uuids, rows of paused
+   * calendars and rows out of the window. Not the mapped rows the diff deletes.
+   */
   val unmanagedMarked: Int = 0,
   /** Recurrence lines other than RRULE, EXDATE and RDATE. */
   val droppedRecurrenceLines: Int = 0,

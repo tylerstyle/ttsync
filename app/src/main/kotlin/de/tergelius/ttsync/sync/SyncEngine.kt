@@ -4,6 +4,7 @@ import de.tergelius.ttsync.TtLog
 import de.tergelius.ttsync.calendar.BatchResult
 import de.tergelius.ttsync.calendar.CalendarGateway
 import de.tergelius.ttsync.calendar.CalendarOp
+import de.tergelius.ttsync.calendar.MarkedRow
 import de.tergelius.ttsync.calendar.OpResult
 import de.tergelius.ttsync.calendar.RowCheck
 import de.tergelius.ttsync.calendar.TargetCalendar
@@ -902,7 +903,13 @@ class DefaultSyncEngine(
           }
         }
       }
-      unmanagedMarked = rows.count { it.uuid !in activeWrites && it.eventId !in leftoverIds }
+      // A mapped in-window row of an active calendar is the diff's even if its uuid is not written:
+      // the diff deletes it (Absent, or missing from a complete fetch), so it is not left alone.
+      val active = works.filterNot { it.paused }.mapTo(HashSet()) { it.id }
+      fun managedByDiff(row: MarkedRow): Boolean =
+        mappingFor(row.uuid)?.let { it.eventId == row.eventId && it.endAt >= windowStart && it.ttCalId in active } == true
+      unmanagedMarked =
+        rows.count { it.uuid !in activeWrites && it.eventId !in leftoverIds && !managedByDiff(it) }
       log.i(
         "adoption scan: marked=${rows.size} unmanaged=$unmanagedMarked duplicates=$duplicates " +
           "leftovers=${leftoverIds.size}"
