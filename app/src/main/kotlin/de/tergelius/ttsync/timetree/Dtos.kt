@@ -1,10 +1,15 @@
 package de.tergelius.ttsync.timetree
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
 /*
  * Wire DTOs of the TimeTree web API (DESIGN.md sections 3 and 4).
@@ -41,9 +46,16 @@ data class TtCalendar(
   override fun toString(): String = "TtCalendar(id=$id, active=$isActive)"
 }
 
-/** `GET /calendar/{id}/labels` */
+/**
+ * `GET /calendar/{id}/labels`. The API sends the list as `calendar_labels` (real dump, 2026-11-12);
+ * `labels` is accepted too. Labels only add a line to the description, so a response without either
+ * key is an empty list rather than [TtError.ApiChanged]. Unnamed labels have `name: ""`.
+ */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class TtLabelsResponse(val labels: List<TtLabel>)
+data class TtLabelsResponse(
+  @JsonNames("calendar_labels") val labels: List<TtLabel> = emptyList(),
+)
 
 /** A label of one calendar. Only the name is used (`Label: <name>` in the description). */
 @Serializable
@@ -71,6 +83,11 @@ data class TtEventsPage(
  *
  * An event with [recurringUuid] or [parentId] is an override (an edited or deleted occurrence of a
  * series). A deleted event has [deactivatedAt] set (a tombstone).
+ *
+ * Tombstones decode leniently: if one lacks `all_day`, `start_at`, `end_at` or `updated_at` (or
+ * sends null), it gets [allDay] false, [startAt] and [endAt] 0 (meaning "unknown", never a real
+ * time) and [updatedAt] = [deactivatedAt]. Only [uuid], [recurringUuid], [parentId] and
+ * [deactivatedAt] of a tombstone are reliable. A live event without these fields is malformed.
  */
 @Serializable
 data class TtEvent(
@@ -115,25 +132,35 @@ data class TtEvent(
     const val TYPE_BIRTHDAY = 1
     const val CATEGORY_MEMO = 2
 
-    /** Decodes one event (a page entry or a snapshot). Malformed JSON becomes [TtError.ApiChanged]. */
+    /**
+     * Decodes one event (a snapshot or a page entry), with the tombstone defaults above. Malformed
+     * JSON becomes [TtError.ApiChanged].
+     */
     fun fromJson(json: String): TtEvent =
-      try {
-        TtJson.decodeFromString(serializer(), json)
-      } catch (e: SerializationException) {
-        throw TtError.ApiChanged("event JSON did not decode", e)
-      } catch (e: IllegalArgumentException) {
-        throw TtError.ApiChanged("event JSON did not decode", e)
+      decodeTt("event") {
+        val element = TtJson.parseToJsonElement(json)
+        if (element !is JsonObject) throw SerializationException("event is not an object")
+        TtJson.decodeFromJsonElement(serializer(), withTombstoneDefaults(element))
       }
 
     /** Decodes one raw page entry. Malformed JSON becomes [TtError.ApiChanged]. */
     fun fromJson(json: JsonObject): TtEvent =
-      try {
-        TtJson.decodeFromJsonElement(serializer(), json)
-      } catch (e: SerializationException) {
-        throw TtError.ApiChanged("event JSON did not decode", e)
-      } catch (e: IllegalArgumentException) {
-        throw TtError.ApiChanged("event JSON did not decode", e)
-      }
+      decodeTt("event") { TtJson.decodeFromJsonElement(serializer(), withTombstoneDefaults(json)) }
+
+    /** Fills a tombstone's missing or null required fields; any other object is returned as is. */
+    private fun withTombstoneDefaults(json: JsonObject): JsonObject {
+      val deactivatedAt = (json["deactivated_at"] as? JsonPrimitive)?.longOrNull ?: return json
+      fun missing(key: String) = json[key].let { it == null || it is JsonNull }
+      val defaults =
+        listOf(
+            "all_day" to JsonPrimitive(false),
+            "start_at" to JsonPrimitive(0L),
+            "end_at" to JsonPrimitive(0L),
+            "updated_at" to JsonPrimitive(deactivatedAt),
+          )
+          .filter { (key, _) -> missing(key) }
+      return if (defaults.isEmpty()) json else JsonObject(json + defaults)
+    }
   }
 }
 
@@ -149,3 +176,19 @@ data class TtErrorResponse(val error: TtErrorBody? = null)
 
 @Serializable
 data class TtErrorBody(val code: Int? = null, val message: String? = null)
+
+/**
+ * Runs a kotlinx-serialization decode and turns a failure into [TtError.ApiChanged].
+ *
+ * The decoder's exception is deliberately not kept as the cause: its message can quote the JSON
+ * input, which may hold event content, and causes end up in logs. Only the exception's class name
+ * survives. Debug builds keep the raw response in the dump for diagnosis.
+ */
+internal inline fun <T> decodeTt(what: String, decode: () -> T): T =
+  try {
+    decode()
+  } catch (e: SerializationException) {
+    throw TtError.ApiChanged("$what JSON did not decode (${e::class.simpleName})")
+  } catch (e: IllegalArgumentException) {
+    throw TtError.ApiChanged("$what JSON did not decode (${e::class.simpleName})")
+  }

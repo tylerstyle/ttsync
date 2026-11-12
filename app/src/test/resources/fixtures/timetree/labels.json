@@ -1,0 +1,105 @@
+{
+  "since": 1794471736365,
+  "calendar_labels": [
+    {
+      "id": 1,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 3067015,
+      "order": 1,
+      "default_color": 3067015,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 2,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 4047560,
+      "order": 2,
+      "default_color": 4047560,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 3,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 4698871,
+      "order": 3,
+      "default_color": 4698871,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 4,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 9732216,
+      "order": 4,
+      "default_color": 9732216,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 5,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 2171169,
+      "order": 5,
+      "default_color": 2171169,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 6,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 15153979,
+      "order": 6,
+      "default_color": 15153979,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 7,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 15949708,
+      "order": 7,
+      "default_color": 15949708,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 8,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 16482167,
+      "order": 8,
+      "default_color": 16482167,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 9,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 16629805,
+      "order": 9,
+      "default_color": 16629805,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    },
+    {
+      "id": 10,
+      "calendar_id": 7000001,
+      "name": "",
+      "color": 11766748,
+      "order": 10,
+      "default_color": 11766748,
+      "updated_at": 1794465771989,
+      "created_at": 1794465771989
+    }
+  ]
+}
