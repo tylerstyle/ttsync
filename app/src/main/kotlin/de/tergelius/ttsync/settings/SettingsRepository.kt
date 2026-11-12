@@ -1,6 +1,7 @@
 package de.tergelius.ttsync.settings
 
 import de.tergelius.ttsync.calendar.TargetCalendar
+import de.tergelius.ttsync.mapping.EventFilter
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlinx.coroutines.flow.Flow
@@ -46,10 +47,21 @@ data class Settings(
   val keepRunningDone: Boolean = false,
 )
 
-/** A selected TimeTree calendar. [name] is TimeTree's name at selection time, for display only. */
+/**
+ * A selected TimeTree calendar. [name] is TimeTree's name at selection time, for display only.
+ * [filter] chooses which of its events are copied; null copies all of them (0.1.x behaviour).
+ *
+ * Stored as JSON ([StoreCodec]); a null filter is not written, so an unfiltered selection is stored
+ * exactly as 0.1.x stored it, and 0.1.x values decode with `filter = null`. Anything that rebuilds
+ * a selection must carry the filter over (`copy`, not a new instance).
+ */
 @Serializable
-data class SourceCalendar(val id: Long, val name: String) {
-  override fun toString(): String = "SourceCalendar(id=$id)"
+data class SourceCalendar(val id: Long, val name: String, val filter: EventFilter? = null) {
+  /** [filter] if it restricts anything, else null: what the sync applies. */
+  val activeFilter: EventFilter?
+    get() = filter?.takeUnless { it.isEmpty }
+
+  override fun toString(): String = "SourceCalendar(id=$id, filter=${activeFilter != null})"
 }
 
 /** Sync intervals the user may choose; never shorter than 1 h, as calendar owners were promised. */

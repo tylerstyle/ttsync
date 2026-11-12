@@ -1,5 +1,6 @@
 package de.tergelius.ttsync.ui
 
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.settings.Settings
 import de.tergelius.ttsync.settings.SetupStep
 import de.tergelius.ttsync.settings.SourceCalendar
@@ -101,6 +102,61 @@ class SetupViewModelsTest {
       ),
       options,
     )
+  }
+
+  @Test
+  fun sourcesSelectionKeepsStoredFilters() {
+    // Rebuilding SourceCalendar(id, name) would silently drop every filter.
+    val filter = EventFilter(labelIds = setOf(3))
+    val selection =
+      SourcesViewModel.selectionOf(
+        options =
+          listOf(
+            SourceOption(1, "Family (renamed)", selected = true),
+            SourceOption(2, "Football", selected = false),
+            SourceOption(3, "School", selected = true),
+            SourceOption(9, null, selected = true, available = false),
+          ),
+        stored =
+          listOf(
+            SourceCalendar(1, "Family", filter),
+            SourceCalendar(2, "Football", filter),
+            SourceCalendar(9, "Gone", filter),
+          ),
+      )
+    assertEquals(
+      listOf(
+        SourceCalendar(1, "Family (renamed)", filter),
+        SourceCalendar(3, "School"),
+        SourceCalendar(9, "", filter),
+      ),
+      selection,
+    )
+  }
+
+  @Test
+  fun savingSourcesKeepsTheFilterOfACalendarThatStaysSelected() {
+    val filter = EventFilter(labelIds = setOf(3))
+    val g =
+      UiTestGraph(
+        settings =
+          Settings(
+            sources = listOf(SourceCalendar(1, "Family", filter)),
+            target = target(15),
+            keepRunningDone = true,
+          ),
+        credentials = SIGNED_IN,
+      )
+    g.client.calendarsResult = { listOf(TtCalendar(1, "Family"), TtCalendar(2, "Football")) }
+    val vm = SourcesViewModel(g.settings, g.actions)
+    vm.toggle(2)
+    vm.save()
+    assertEquals(
+      listOf(SourceCalendar(1, "Family", filter), SourceCalendar(2, "Football")),
+      g.settings.flow.value.sources,
+    )
+    // A new calendar, no filter change: one FULL run, as before.
+    assertEquals(1, g.calls.log.count { it == "scheduler.runNow(full=true, SETUP)" })
   }
 
   @Test

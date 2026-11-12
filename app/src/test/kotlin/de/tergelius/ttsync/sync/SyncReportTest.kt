@@ -18,8 +18,8 @@ class SyncReportTest {
         startedAt = 1,
         finishedAt = 2,
         failure = SyncFailure(SyncProblem.RATE_LIMITED, code = -495, retryAfterMillis = 1_800_000),
-        counts = SyncCounts(added = 3),
-        calendars = listOf(CalendarReport(7, SyncMode.FULL, CalendarState.ACTIVE, SyncCounts(added = 3))),
+        counts = SyncCounts(added = 3, filtered = 2),
+        calendars = listOf(CalendarReport(7, SyncMode.FULL, CalendarState.ACTIVE, SyncCounts(added = 3, filtered = 2))),
         warnings = setOf(SyncWarning.GOOGLE_SYNC_OFF),
       )
     val json = Json.encodeToString(SyncReport.serializer(), report)
@@ -29,9 +29,10 @@ class SyncReportTest {
 
   @Test
   fun countsAdd() {
-    val sum = SyncCounts(added = 1, deleted = 2) + SyncCounts(updated = 3, unmatchedOverrides = 1)
+    val sum = SyncCounts(added = 1, deleted = 2, filtered = 4) + SyncCounts(updated = 3, unmatchedOverrides = 1, filtered = 1)
     assertEquals(6, sum.writes)
     assertEquals(1, sum.unmatchedOverrides)
+    assertEquals(5, sum.filtered)
     assertEquals(0, SyncCounts().writes)
   }
 

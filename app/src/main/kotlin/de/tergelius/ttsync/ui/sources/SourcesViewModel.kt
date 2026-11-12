@@ -103,9 +103,10 @@ class SourcesViewModel(
   /** Saves, after asking if copies would be deleted. */
   fun save() {
     if (!_state.value.canSave) return
-    val selected = selection()
+    val options = _state.value.options
     viewModelScope.launch {
       try {
+        val selected = selection(options)
         val change = actions.sourceChange(selected)
         if (change.removesCopies) {
           _state.update { it.copy(confirmRemoval = change.removed) }
@@ -122,12 +123,17 @@ class SourcesViewModel(
 
   fun confirmRemoval() {
     _state.update { it.copy(confirmRemoval = null) }
-    viewModelScope.launch { apply(selection()) }
+    val options = _state.value.options
+    viewModelScope.launch { apply(selection(options)) }
   }
 
   fun dismissRemoval() = _state.update { it.copy(confirmRemoval = null) }
 
   fun onNavigated() = _state.update { it.copy(next = null) }
+
+  /** The checked calendars, read against the stored selection so that filters are kept. */
+  private suspend fun selection(options: List<SourceOption>): List<SourceCalendar> =
+    selectionOf(options, settings.current().sources)
 
   private suspend fun apply(selected: List<SourceCalendar>) {
     _state.update { it.copy(saving = true, saveError = null) }
@@ -141,10 +147,21 @@ class SourcesViewModel(
     }
   }
 
-  private fun selection(): List<SourceCalendar> =
-    _state.value.options.filter { it.selected }.map { SourceCalendar(it.id, it.name.orEmpty()) }
-
   companion object {
+    /**
+     * The checked [options] as the selection to save. A calendar that is already [stored] keeps
+     * everything stored with it (its filter), with the current name; a new one starts unfiltered.
+     */
+    fun selectionOf(options: List<SourceOption>, stored: List<SourceCalendar>): List<SourceCalendar> {
+      val byId = stored.associateBy { it.id }
+      return options
+        .filter { it.selected }
+        .map { option ->
+          val name = option.name.orEmpty()
+          byId[option.id]?.copy(name = name) ?: SourceCalendar(option.id, name)
+        }
+    }
+
     /**
      * Active TimeTree calendars, pre-selected from the stored selection, plus stored ones that
      * TimeTree no longer lists (lost access), so they can be deselected.

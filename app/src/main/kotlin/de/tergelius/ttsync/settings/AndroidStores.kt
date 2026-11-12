@@ -20,10 +20,6 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerializationException
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.json.Json
 
 /*
  * Android implementations of the settings interfaces on Preferences DataStore. One DataStore per
@@ -45,21 +41,6 @@ private val Context.statusStore: DataStore<Preferences> by
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
   )
 
-/** Lenient JSON for the values stored as text: unknown keys from a newer version are ignored. */
-private val StoreJson = Json { ignoreUnknownKeys = true }
-
-/** Reads a JSON value, or null if it is missing or no longer decodes (then it is set up again). */
-private fun <T> decodeOrNull(serializer: KSerializer<T>, text: String?): T? =
-  text?.let {
-    try {
-      StoreJson.decodeFromString(serializer, it)
-    } catch (_: SerializationException) {
-      null
-    } catch (_: IllegalArgumentException) {
-      null
-    }
-  }
-
 /** An unreadable file reads as empty instead of failing every collector. */
 private fun DataStore<Preferences>.safeData(): Flow<Preferences> =
   data.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
@@ -74,12 +55,12 @@ class DataStoreSettingsRepository(context: Context) : SettingsRepository {
   override suspend fun current(): Settings = settings.first()
 
   override suspend fun setSources(sources: List<SourceCalendar>) {
-    store.edit { it[SOURCES] = StoreJson.encodeToString(SOURCES_SERIALIZER, sources) }
+    store.edit { it[SOURCES] = StoreCodec.encodeSources(sources) }
   }
 
   override suspend fun setTarget(target: TargetCalendar, displayName: String) {
     store.edit {
-      it[TARGET] = StoreJson.encodeToString(TargetCalendar.serializer(), target)
+      it[TARGET] = StoreCodec.encodeTarget(target)
       it[TARGET_NAME] = displayName
     }
   }
@@ -112,8 +93,8 @@ class DataStoreSettingsRepository(context: Context) : SettingsRepository {
 
   private fun decode(prefs: Preferences): Settings =
     Settings(
-      sources = decodeOrNull(SOURCES_SERIALIZER, prefs[SOURCES]).orEmpty(),
-      target = decodeOrNull(TargetCalendar.serializer(), prefs[TARGET]),
+      sources = StoreCodec.decodeSources(prefs[SOURCES]),
+      target = StoreCodec.decodeTarget(prefs[TARGET]),
       targetDisplayName = prefs[TARGET_NAME],
       interval =
         SyncInterval.entries.firstOrNull { it.name == prefs[INTERVAL] } ?: SyncInterval.DEFAULT,
@@ -127,7 +108,6 @@ class DataStoreSettingsRepository(context: Context) : SettingsRepository {
     val INTERVAL = stringPreferencesKey("interval")
     val KEEP_RUNNING_DONE = booleanPreferencesKey("keep_running_done")
     val INSTALL_UUID = stringPreferencesKey("install_uuid")
-    val SOURCES_SERIALIZER = ListSerializer(SourceCalendar.serializer())
     val HEX32 = Regex("[0-9a-f]{32}")
 
     fun isInstallUuid(value: String): Boolean = HEX32.matches(value)
@@ -144,7 +124,7 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
 
   override suspend fun recordRun(report: SyncReport) {
     store.edit { prefs ->
-      prefs[LAST_REPORT] = StoreJson.encodeToString(SyncReport.serializer(), report)
+      prefs[LAST_REPORT] = StoreCodec.encodeReport(report)
       if (report.succeeded) {
         prefs[LAST_SUCCESS_AT] = report.finishedAt
         prefs.remove(CONSECUTIVE_FAILURES)
@@ -185,7 +165,7 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
 
   private fun decode(prefs: Preferences): SyncStatus =
     SyncStatus(
-      lastReport = decodeOrNull(SyncReport.serializer(), prefs[LAST_REPORT]),
+      lastReport = StoreCodec.decodeReport(prefs[LAST_REPORT]),
       lastSuccessAt = prefs[LAST_SUCCESS_AT],
       consecutiveFailures = prefs[CONSECUTIVE_FAILURES] ?: 0,
       authRejections = prefs[AUTH_REJECTIONS] ?: 0,

@@ -47,6 +47,11 @@ data class SyncCounts(
   val unmanagedMarked: Int = 0,
   /** Recurrence lines other than RRULE, EXDATE and RDATE. */
   val droppedRecurrenceLines: Int = 0,
+  /**
+   * Live, in-window events a calendar's filter excludes (0.2.0). Reports of 0.1.x have no such
+   * field and read as 0.
+   */
+  val filtered: Int = 0,
 ) {
   /** Rows written to the calendar. Zero on a no-op run. */
   val writes: Int
@@ -63,6 +68,7 @@ data class SyncCounts(
       unmatchedOverrides = unmatchedOverrides + other.unmatchedOverrides,
       unmanagedMarked = unmanagedMarked + other.unmanagedMarked,
       droppedRecurrenceLines = droppedRecurrenceLines + other.droppedRecurrenceLines,
+      filtered = filtered + other.filtered,
     )
 }
 
