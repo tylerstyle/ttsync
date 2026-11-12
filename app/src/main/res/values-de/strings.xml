@@ -266,6 +266,7 @@
     <string name="status_last_run">Letzter Lauf: %1$s</string>
     <string name="status_last_run_failed">Letzter Lauf fehlgeschlagen: %1$s</string>
     <string name="status_counts">Hinzugefügt %1$d · Aktualisiert %2$d · Gelöscht %3$d · Übersprungen %4$d</string>
+    <string name="status_counts_filtered">Hinzugefügt %1$d · Aktualisiert %2$d · Gelöscht %3$d · Übersprungen %4$d · Gefiltert %5$d</string>
     <plurals name="status_unmatched">
         <item quantity="one">%d geänderter Einzeltermin einer Terminserie konnte nicht genau zugeordnet werden. Die Serie zeigt vielleicht einen zusätzlichen oder veralteten Termin.</item>
         <item quantity="other">%d geänderte Einzeltermine von Terminserien konnten nicht genau zugeordnet werden. Die Serien zeigen vielleicht zusätzliche oder veraltete Termine.</item>

@@ -284,6 +284,8 @@
     <string name="status_last_run_failed">Last run failed: %1$s</string>
     <!-- Counts of the last run -->
     <string name="status_counts">Added %1$d · Updated %2$d · Deleted %3$d · Skipped %4$d</string>
+    <!-- The same, when calendar filters left out events (%5$d) -->
+    <string name="status_counts_filtered">Added %1$d · Updated %2$d · Deleted %3$d · Skipped %4$d · Filtered %5$d</string>
     <plurals name="status_unmatched">
         <item quantity="one">%d edited occurrence of a repeating event couldn\'t be matched exactly. Its series may show one extra or outdated occurrence.</item>
         <item quantity="other">%d edited occurrences of repeating events couldn\'t be matched exactly. Their series may show extra or outdated occurrences.</item>

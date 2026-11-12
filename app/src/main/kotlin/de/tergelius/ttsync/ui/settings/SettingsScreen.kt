@@ -41,6 +41,7 @@ import de.tergelius.ttsync.ui.common.LoadingBox
 import de.tergelius.ttsync.ui.common.RowDivider
 import de.tergelius.ttsync.ui.common.SectionCard
 import de.tergelius.ttsync.ui.common.TtScaffold
+import de.tergelius.ttsync.ui.sources.sourceNames
 import de.tergelius.ttsync.ui.theme.TTCalendarSyncTheme
 
 /** Where the Settings rows lead. */
@@ -158,11 +159,9 @@ fun SettingsContent(
       ActionRow(
         title = stringResource(R.string.settings_sources),
         subtitle =
-          settings.sources
-            .joinToString(", ") {
-              it.name.ifBlank { resources.getString(R.string.sources_unnamed, it.id) }
-            }
-            .ifBlank { stringResource(R.string.settings_none) },
+          sourceNames(settings.sources, resources).ifBlank {
+            stringResource(R.string.settings_none)
+          },
         actionLabel = stringResource(R.string.action_change),
         onAction = navigation.sources,
       )

@@ -67,6 +67,7 @@ import de.tergelius.ttsync.ui.common.formatTime
 import de.tergelius.ttsync.ui.common.rememberCalendarPermissionRequest
 import de.tergelius.ttsync.ui.common.rememberNotificationRequest
 import de.tergelius.ttsync.ui.common.rememberSettingsLauncher
+import de.tergelius.ttsync.ui.sources.sourceNames
 import de.tergelius.ttsync.ui.theme.TTCalendarSyncTheme
 
 /** Where the Status fix buttons lead. */
@@ -362,7 +363,7 @@ private fun SyncCard(state: StatusUiState, navigation: StatusNavigation, fixes: 
       Hint(
         stringResource(
           R.string.status_copying,
-          calendarNames(state.sources) { resources.getString(R.string.sources_unnamed, it) },
+          sourceNames(state.sources, resources),
           state.targetName,
         )
       )
@@ -394,7 +395,18 @@ private fun LastRun(report: SyncReport) {
   )
   val c: SyncCounts = report.counts
   Text(
-    stringResource(R.string.status_counts, c.added, c.updated, c.deleted, c.skipped),
+    if (c.filtered > 0) {
+      stringResource(
+        R.string.status_counts_filtered,
+        c.added,
+        c.updated,
+        c.deleted,
+        c.skipped,
+        c.filtered,
+      )
+    } else {
+      stringResource(R.string.status_counts, c.added, c.updated, c.deleted, c.skipped)
+    },
     style = MaterialTheme.typography.bodyMedium,
   )
   if (c.unmatchedOverrides > 0) {
@@ -527,7 +539,14 @@ private fun StatusPreview() {
               trigger = SyncTrigger.PERIODIC,
               startedAt = now - 60_000,
               finishedAt = now - 50_000,
-              counts = SyncCounts(added = 3, updated = 1, skipped = 2, unmatchedOverrides = 1),
+              counts =
+                SyncCounts(
+                  added = 3,
+                  updated = 1,
+                  skipped = 2,
+                  unmatchedOverrides = 1,
+                  filtered = 4,
+                ),
             ),
           warnings = listOf(StatusWarning.GOOGLE_SYNC_OFF, StatusWarning.BATTERY_RESTRICTED),
           sources = listOf(SourceCalendar(1, "Family")),
