@@ -267,6 +267,10 @@ colour names (bug B3):
   purpose, so the copy and its hash don't depend on the phone's language. A renamed label reaches
   the copies with their next FULL run, because a rename doesn't change the events.
 
+Relabelling an event, unlike renaming a label, is an edit of the event: it bumps the event's
+`updated_at` (device run 5), so an INCREMENTAL run sees it, and the copy appears or goes with the
+next run.
+
 **Where the filter applies.** The mapper checks it last, after tombstones, the window, deactivated
 events, birthdays and memos, so those behave exactly as without a filter. A live, in-window event
 the filter excludes is `Absent` and counted as `filtered` (`SyncCounts.filtered`, "Filtered N" on
@@ -511,6 +515,9 @@ Status.
    version, certificate SHA-256, source, license.
 
 Strings: English in `values/` is the default, German goes in `values-de/`. No UI text is hard-coded.
+AGP generates a locale config from these folders (`generateLocaleConfig`; `res/resources.properties`
+names the language of `values/`), so on Android 13+ the user can pick the app's language under
+Settings → App languages.
 
 ## 8. Permissions and manifest
 
@@ -686,11 +693,10 @@ target's own events must stay unchanged throughout (`scripts/device-verify.sh` f
     for the ten defaults), with TalkBack (a label row reads its name, its colour and its state), the
     system back gesture (returns to the list and keeps the edit), and a former member (listed only
     while selected, "Left the calendar").
-21. **Relabelling.** Not verified by the API checks yet: whether relabelling an existing event, or
-    changing its attendees, changes its `updated_at`. Compare the event's `updated_at` in the raw
-    dumps (debug build) before and after. If it doesn't change, an INCREMENTAL run misses it and
-    the change reaches the copies with the next FULL: every run for a calendar of up to 3 pages, at
-    most 6 h for a larger one.
+21. **Relabelling.** Give an event another label in TimeTree: its copy goes (or comes) with the
+    next sync, and relabelling it back reverses that. Device run 5 showed that relabelling bumps
+    the event's `updated_at`, so INCREMENTAL runs see it too; renaming a label changes only the
+    labels' `updated_at`, so the new name follows with the next FULL run.
 
 ## 11. Release
 
@@ -746,9 +752,10 @@ Resolved:
 - The Google/Apple sign-in workaround: in the TimeTree app, More → Manage Account → Change email
   address, then Change password; then sign in with that email and password. It is in the README.
 - The repository is <https://github.com/tylerstyle/ttsync>.
+- 0.2.0: relabelling an event bumps its `updated_at`, so INCREMENTAL runs see it; renaming a label
+  doesn't touch the events (device run 5, section 4a).
 
-Still open: none for v1. For 0.2.0: whether relabelling an event changes its `updated_at`
-(section 10, step 21).
+Still open: none.
 
 ## 14. Review resolution
 

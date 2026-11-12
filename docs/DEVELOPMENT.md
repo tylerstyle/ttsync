@@ -278,7 +278,9 @@ far and what is still untested.
 - Keep `android.*` out of `timetree`, `mapping` and `SyncEngine`. Put Android-specific code behind an
   interface (`CalendarGateway`, `SettingsRepository`, `SyncNotifier`, …) so tests can use fakes.
 - Every UI text goes into `res/values/strings.xml` **and** `res/values-de/strings.xml`; nothing is
-  hard-coded.
+  hard-coded. A new language needs only its `values-<lang>/` folder: AGP builds the locale config
+  for Android 13+'s App languages from the folders (`generateLocaleConfig` in
+  `app/build.gradle.kts`; `res/resources.properties` names the language of `values/`).
 - KDoc on classes and non-obvious functions; reference the DESIGN.md section a rule comes from.
 - Logs: counts, codes and uuid prefixes only. Release builds keep only warnings and errors.
 

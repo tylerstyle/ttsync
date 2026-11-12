@@ -3,7 +3,7 @@
 Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
 [DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
 
-Four runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
+Five runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
 driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
@@ -11,7 +11,8 @@ timed events, "TT test weekly" (weekly series with one deleted and one moved occ
 Google calendar, which already held 7 events of its own.
 
 **Safety invariant held in every run:** the target's 7 own events were hashed before the run and
-compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4): never changed. After each run the target held
+compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 in run 5): never
+changed. After each run the target held
 only those 7 events again.
 
 ## Run 1: debug build `d2756c2`
@@ -93,6 +94,34 @@ adb, the way a user who downloaded it from the releases page has it, and then ad
 | Obtainium after the update | Pass: "v0.1.1 Installed / Latest", no update offered |
 | "Remove all copies", Google purges them, uninstall | Pass: no marked rows left |
 
+## Run 5: 0.2.0 event filters, debug build `7e9828b`
+
+The steps of [DESIGN.md](DESIGN.md) section 10 for the filters, in the dark theme, in English and
+with the app's language set to German. The test calendar was extended: of its labels, two were
+renamed in TimeTree (label A and label B), the others kept TimeTree's unnamed default labels; its
+events ("Test A", "Test B", …) carry different labels, attendees and words, and the weekly series
+is there as before. Target: the user's Google calendar with its 7 own events.
+
+| Area | Result |
+|---|---|
+| Setup with a filter on one label (label A, renamed), set on the Sources step before the target | Pass: exactly 1 copy; Status "Filtered 8" |
+| Widening the filter, leaving the editor with the back gesture | Pass: the editor's draft is kept; Save asks nothing and adds the second copy |
+| "Remove copies?" when narrowing (counts 1, 1, 4 and 7) | Pass: each count equalled the copies actually deleted |
+| No question when widening, when clearing, or for an attendee filter that removes nothing | Pass |
+| "Only if it contains", "Skip if it contains" | Pass |
+| A filtered weekly series | Pass: it keeps its EXDATE and its moved occurrence |
+| B3: the copies' `Label:` line | Pass (**B3 verified**): unnamed labels as "Label: Emerald green" and "Label: Apple red", renamed labels by their new names |
+| Relabelling an event in TimeTree, then relabelling it back | Pass: its copy goes with the next sync and comes back with the one after |
+| Renaming a label that the filter uses | Pass: it stays selected, shown with its new name; the copy's `Label:` line follows after the next sync |
+| German UI | Pass |
+| Target's own 7 events | Pass: unchanged at 4 checkpoints |
+| Layout | Five findings, L1–L5 below |
+
+**API answer** (the open question of DESIGN.md section 13): relabelling an event bumps its
+`updated_at`, so an INCREMENTAL run sees it like any other edit. Renaming a label doesn't touch the
+events, only the labels' `updated_at`, so the new name reaches the copies with the next FULL run
+(every run for the test calendar, which is small).
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -102,7 +131,12 @@ adb, the way a user who downloaded it from the releases page has it, and then ad
 | F4 | Info | A second "Sync now" within 60 s was queued as delayed, non-expedited work. With the app in the background it waited until the app came back to the foreground. | Fix round 1: "now" work is always expedited and never delayed; a "Sync now" within 60 s of a successful run queues nothing and Status says "Synced N s ago". Verified in run 2 through the debug receiver; the UI note is R1. |
 | R1 | Low | The "Synced N s ago" snackbar never showed: Status cleared the note, which was its `LaunchedEffect` key, before `showSnackbar`, so Compose cancelled the effect. | Fix round 2: the note is a one-off `SyncedNote` with an id, consumed only after `showSnackbar` returns; a newer note is never cleared by an older one (`StatusViewModelTest`). Verified in run 3. |
 | O1 | Low | Right after a run, "Last successful sync" read "(In 0 minutes)": Status's clock ticks once a minute, so a run that finished after the last tick lay in its future. | 0.1.1: Status takes the newer of the clock and the last success as "now" (`StatusViewModelTest`). Verified in run 4. |
-| B3 | Low, fixed in 0.2.0, not yet verified on the device | TimeTree's default labels have empty names (the apps show them by the name of their colour), so copies get no `Label:` line. | 0.2.0: the copies' `Label:` line uses the label's name, else the English name of its colour (TimeTree's 25 colour names, by colour, not by label id). Copies with unnamed labels are rewritten once at their next FULL. The filter editor shows the same names, localized. |
+| B3 | Low | TimeTree's default labels have empty names (the apps show them by the name of their colour), so copies get no `Label:` line. | 0.2.0: the copies' `Label:` line uses the label's name, else the English name of its colour (TimeTree's 25 colour names, by colour, not by label id). Copies with unnamed labels are rewritten once at their next FULL. The filter editor shows the same names, localized. Verified in run 5. |
+| L1 | Low | Status's last-run counts wrapped with a "·" left at the end of a line ("… · Skipped 1 ·" / "Filtered 8"). | 0.2.0 fix round (`b13b86e`): the counts, and the "Events: …" summary on Sources, wrap only between items, with the "·" starting the next line. Not yet verified on the device. |
+| L2 | Low | The swatch of a "Midnight black" label was nearly invisible in the dark theme. | 0.2.0 fix round: every swatch has a 1 dp outline. Not yet verified on the device. |
+| L3 | Low | Extra space under the "Events: …" line on Sources. | 0.2.0 fix round: the line sits right under its calendar's name, like a subtitle. Not yet verified on the device. |
+| L4 | Low | German relative times in parentheses started with a capital: "(Vor 1 Minute)". | 0.2.0 fix round: the first letter is lower case, locale-aware: "(vor 1 Minute)"; in English "(5 minutes ago)" is unchanged and "(In 40 minutes)" becomes "(in 40 minutes)". Not yet verified on the device. |
+| L5 | Low | Android 13+'s Settings → App languages didn't offer the app: no locale config. | 0.2.0 fix round: AGP generates one for English and German. Not yet verified on the device. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in
 local-time form, `WKST=MO`, default reminders); the app hashes what it writes, not what it reads
@@ -111,11 +145,9 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
 
 ## Not tested yet
 
-- **0.2.0 (event filters)**, all of [DESIGN.md](DESIGN.md) section 10, steps 15–21: the update from
-  0.1.1 with the B3 rewrite; setting, narrowing and widening a filter with the removal question and
-  "Filtered N"; each criterion and the rule for edited occurrences; a renamed label; a filter set
-  during setup and the leftover cleanup; the editor in English and German, with TalkBack and the
-  back gesture; whether relabelling an event changes its `updated_at`.
+- **The 0.2.0 release build as an update over 0.1.1 through Obtainium** ([DESIGN.md](DESIGN.md)
+  section 10, step 15, with the release APK): runs after the release.
+- **The layout fixes L1–L5** of the 0.2.0 fix round.
 
 - **Feeds of more than 3 pages** (about 300 events) on a real calendar: the high-water INCREMENTAL
   path and the 6-hour FULL ran only in unit tests. The test calendar always fit on one page.

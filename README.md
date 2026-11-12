@@ -9,7 +9,9 @@ phone. Google Calendar then shows them on all your devices, next to your other c
 - **Unofficial:** not made by or affiliated with TimeTree. It uses TimeTree's unofficial web API,
   which can change or stop working at any time. See [Things to know](#things-to-know).
 
-The app is in English and German. [Deutsche Kurzfassung unten.](#deutsch)
+The app is in English and German. It follows the phone's language; on Android 13 and newer you
+can also set it for this app alone, under App languages in the system settings or in the app's
+info page. [Deutsche Kurzfassung unten.](#deutsch)
 
 ## What it does
 
@@ -352,7 +354,9 @@ project is put together, how to build and test it, and how to contribute. More b
 
 **TT Calendar Sync** kopiert die Termine ausgewählter TimeTree-Kalender in einen Google-Kalender auf
 deinem Android-Handy, etwa stündlich und nur in diese Richtung. Die App liest nur aus TimeTree und
-ändert dort nie etwas. Es gibt keinen Server: alles läuft auf dem Handy.
+ändert dort nie etwas. Es gibt keinen Server: alles läuft auf dem Handy. Sie ist auf Englisch und
+Deutsch und folgt der Sprache des Handys; ab Android 13 lässt sich ihre Sprache auch einzeln
+einstellen (App-Sprachen in den Systemeinstellungen oder in den App-Infos).
 
 **Inoffiziell:** Die App steht in keiner Verbindung zu TimeTree, Inc. und wird von TimeTree weder
 unterstützt noch gesponsert. Sie nutzt TimeTrees inoffizielle Web-Schnittstelle, die TimeTree
