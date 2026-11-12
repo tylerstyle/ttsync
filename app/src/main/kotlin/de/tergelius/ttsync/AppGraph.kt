@@ -29,6 +29,10 @@ import de.tergelius.ttsync.timetree.TimeTreeApi
 import de.tergelius.ttsync.timetree.TimeTreeClient
 import de.tergelius.ttsync.timetree.TtSessionStore
 import de.tergelius.ttsync.ui.appViewModelFactory
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 
 /**
@@ -45,6 +49,12 @@ class AppGraph(context: Context) {
 
   val log: TtLog = AndroidTtLog
 
+  /**
+   * Process-wide scope for work that outlives a screen: scheduler operations, the debug receiver,
+   * startup tasks. Never cancelled; failures inside must be caught where they are launched.
+   */
+  val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
   // timetree
   val okHttpClient: OkHttpClient by lazy { TimeTreeApi.newOkHttpClient() }
   val rawResponseSink: RawResponseSink by lazy { BuildVariant.rawResponseSink(appContext) }
@@ -53,13 +63,13 @@ class AppGraph(context: Context) {
     StoredSessionStore(credentialStore, settingsRepository, statusRepository)
   }
   val timeTreeClient: TimeTreeClient by lazy {
-    OkHttpTimeTreeClient(okHttpClient, sessionStore, requestPacer, rawResponseSink)
+    OkHttpTimeTreeClient(okHttpClient, sessionStore, requestPacer, rawResponseSink, log = log)
   }
 
   // settings
   val settingsRepository: SettingsRepository by lazy { DataStoreSettingsRepository(appContext) }
   val statusRepository: StatusRepository by lazy { DataStoreStatusRepository(appContext) }
-  val credentialStore: CredentialStore by lazy { KeystoreCredentialStore(appContext) }
+  val credentialStore: CredentialStore by lazy { KeystoreCredentialStore(appContext, log) }
 
   // mapping, store, calendar
   val eventMapper: EventMapper by lazy { DefaultEventMapper() }
@@ -79,11 +89,35 @@ class AppGraph(context: Context) {
       log = log,
     )
   }
-  val syncScheduler: SyncScheduler by lazy { WorkManagerSyncScheduler(appContext) }
+  val workScheduler: WorkManagerSyncScheduler by lazy {
+    WorkManagerSyncScheduler(
+      context = appContext,
+      settings = settingsRepository,
+      credentials = credentialStore,
+      status = statusRepository,
+      scope = appScope,
+      log = log,
+    )
+  }
+  val syncScheduler: SyncScheduler
+    get() = workScheduler
   val syncNotifier: SyncNotifier by lazy { AndroidSyncNotifier(appContext) }
 
   // ui
   val viewModelFactory: ViewModelProvider.Factory by lazy { appViewModelFactory(this, appContext) }
+
+  /**
+   * App start: a rate limit recorded before the process died still holds, so the in-memory pacer
+   * refuses requests until it ends, interactive ones included.
+   */
+  suspend fun restoreRateLimit() {
+    val until = statusRepository.current().rateLimitedUntil ?: return
+    val remaining = until - System.currentTimeMillis()
+    if (remaining > 0) {
+      requestPacer.backOff(remaining.milliseconds)
+      log.i("rate limit still active for ${remaining / 60_000} min")
+    }
+  }
 }
 
 /** The process-wide [AppGraph]. */

@@ -75,6 +75,7 @@ class DefaultRequestPacer(
   private fun checkBackOff() {
     val until = blockedUntil ?: return
     val remaining = until - nowMillis()
-    if (remaining > 0) throw TtError.RateLimited(remaining.milliseconds)
+    // The remaining time as it is: an ongoing back-off must not be stretched to MIN_BACKOFF again.
+    if (remaining > 0) throw TtError.RateLimited(remaining.milliseconds, backoff = remaining.milliseconds)
   }
 }

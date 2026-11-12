@@ -25,6 +25,8 @@ data class SettingsUiState(
   /** Shown after "Remove all copies"; dismissing it continues at [next]. */
   val removal: RemovalReport? = null,
   val failed: Boolean = false,
+  /** "Remove all copies" failed; nothing was changed. Shown instead of the generic error. */
+  val removalFailed: Boolean = false,
   /** One-off: show "Full resync started". */
   val resyncStarted: Boolean = false,
   val next: SetupStep? = null,
@@ -60,18 +62,26 @@ class SettingsViewModel(
 
   fun onResyncShown() = ui.update { it.copy(resyncStarted = false) }
 
-  fun askRemoveAll() = ui.update { it.copy(confirmRemoveAll = true, failed = false) }
+  fun askRemoveAll() = ui.update {
+    it.copy(confirmRemoveAll = true, failed = false, removalFailed = false)
+  }
 
   fun dismissRemoveAll() = ui.update { if (it.removing) it else it.copy(confirmRemoveAll = false) }
 
   /** "Remove all copies": stops syncing and deletes every copy ([UserActions.removeAllCopies]). */
   fun confirmRemoveAll() {
     if (ui.value.removing) return
-    ui.update { it.copy(removing = true, failed = false) }
+    ui.update { it.copy(removing = true, failed = false, removalFailed = false) }
     viewModelScope.launch {
       try {
         val report = actions.removeAllCopies()
-        ui.update { it.copy(removing = false, confirmRemoveAll = false, removal = report) }
+        ui.update {
+          if (report.failure != null) {
+            it.copy(removing = false, confirmRemoveAll = false, failed = true, removalFailed = true)
+          } else {
+            it.copy(removing = false, confirmRemoveAll = false, removal = report)
+          }
+        }
       } catch (e: CancellationException) {
         throw e
       } catch (_: Exception) {
@@ -95,7 +105,7 @@ class SettingsViewModel(
     }
   }
 
-  fun dismissFailed() = ui.update { it.copy(failed = false) }
+  fun dismissFailed() = ui.update { it.copy(failed = false, removalFailed = false) }
 
   fun onNavigated() = ui.update { it.copy(next = null) }
 }

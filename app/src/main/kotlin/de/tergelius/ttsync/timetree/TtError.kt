@@ -38,15 +38,16 @@ sealed class TtError(message: String, cause: Throwable? = null) : Exception(mess
   }
 
   /**
-   * `-495` or HTTP 429. Retry after [backoff]: the server's `Retry-After` if it sent one, but never
-   * sooner than [MIN_BACKOFF].
+   * `-495` or HTTP 429. Retry after [backoff]: by default the server's `Retry-After` if it sent one,
+   * but never sooner than [MIN_BACKOFF]. A refusal by [RequestPacer] during an ongoing back-off
+   * passes the exact remaining time as [backoff], so it is not inflated back to [MIN_BACKOFF].
    */
-  class RateLimited(val retryAfter: Duration?) : TtError("rate limited (retryAfter=$retryAfter)") {
+  class RateLimited(
+    val retryAfter: Duration?,
+    val backoff: Duration = retryAfter?.coerceAtLeast(MIN_BACKOFF) ?: MIN_BACKOFF,
+  ) : TtError("rate limited (retryAfter=$retryAfter)") {
     override val retryable: Boolean
       get() = true
-
-    val backoff: Duration
-      get() = retryAfter?.coerceAtLeast(MIN_BACKOFF) ?: MIN_BACKOFF
 
     companion object {
       val MIN_BACKOFF: Duration = 30.minutes

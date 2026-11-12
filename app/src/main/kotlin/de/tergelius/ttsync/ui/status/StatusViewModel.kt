@@ -78,6 +78,8 @@ data class StatusUiState(
   val confirmRemovePaused: Boolean = false,
   val removingPaused: Boolean = false,
   val actionFailed: Boolean = false,
+  /** "Remove copies" of paused calendars failed; they stay selected. */
+  val removalFailed: Boolean = false,
 ) {
   /** "Sync now" is pointless while a run is going on or about to start. */
   val canSyncNow: Boolean
@@ -190,6 +192,7 @@ class StatusViewModel(
     val confirmRemovePaused: Boolean = false,
     val removingPaused: Boolean = false,
     val actionFailed: Boolean = false,
+    val removalFailed: Boolean = false,
   )
 
   private val stored =
@@ -209,6 +212,7 @@ class StatusViewModel(
             confirmRemovePaused = d.confirmRemovePaused,
             removingPaused = d.removingPaused,
             actionFailed = d.actionFailed,
+            removalFailed = d.removalFailed,
           )
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatusUiState())
@@ -244,7 +248,7 @@ class StatusViewModel(
 
   fun syncNow() {
     val failed = runCatching { actions.syncNow() }.isFailure
-    dialogs.update { it.copy(actionFailed = failed) }
+    dialogs.update { it.copy(actionFailed = failed, removalFailed = false) }
   }
 
   /** Calendar permission granted again from the Status fix button: sync right away. */
@@ -265,11 +269,19 @@ class StatusViewModel(
       dialogs.update { it.copy(confirmRemovePaused = false) }
       return
     }
-    dialogs.update { it.copy(removingPaused = true, actionFailed = false) }
+    dialogs.update { it.copy(removingPaused = true, actionFailed = false, removalFailed = false) }
     viewModelScope.launch {
       try {
-        actions.removePaused(ids)
-        dialogs.update { it.copy(confirmRemovePaused = false, removingPaused = false) }
+        val report = actions.removePaused(ids)
+        val failed = report.failure != null
+        dialogs.update {
+          it.copy(
+            confirmRemovePaused = false,
+            removingPaused = false,
+            actionFailed = failed,
+            removalFailed = failed,
+          )
+        }
       } catch (e: CancellationException) {
         throw e
       } catch (_: Exception) {
@@ -280,7 +292,7 @@ class StatusViewModel(
     }
   }
 
-  fun dismissActionFailed() = dialogs.update { it.copy(actionFailed = false) }
+  fun dismissActionFailed() = dialogs.update { it.copy(actionFailed = false, removalFailed = false) }
 
   private inline fun <T> attempt(block: () -> T): T? =
     try {

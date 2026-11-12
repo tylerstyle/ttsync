@@ -364,6 +364,31 @@ class SyncEngineTest {
     assertEquals(2, h.engine.deselect(setOf(CAL_B)).deleted)
   }
 
+  @Test
+  fun aFailedDeselectKeepsTheCalendarSelectedSoItCanBeRetried() = runTest {
+    // Phase 4 review, SHOULD-FIX-1: the selection changes only after the copies are gone.
+    h.selectB()
+    h.sync().assertOk()
+    val copiesBefore = h.copies().keys
+    h.gateway.onApply = { throw RuntimeException("provider died") }
+
+    val removal = h.engine.deselect(setOf(CAL_B))
+
+    assertEquals(SyncProblem.CALENDAR_WRITE_FAILED, removal.failure?.problem)
+    assertEquals(listOf(CAL_A, CAL_B), h.settings.value.sources.map { it.id })
+    assertEquals(2, h.store.mappings.forCalendar(CAL_B).size)
+    assertTrue(h.store.snapshots.forCalendar(CAL_B).isNotEmpty())
+    assertNotNull(h.store.cursors.get(CAL_B))
+    assertEquals(copiesBefore, h.copies().keys)
+
+    h.gateway.onApply = null
+    val retry = h.engine.deselect(setOf(CAL_B))
+    assertTrue(retry.succeeded)
+    assertEquals(2, retry.deleted)
+    assertEquals(listOf(CAL_A), h.settings.value.sources.map { it.id })
+    assertEquals(h.liveA, h.copies().keys)
+  }
+
   // E11 -----------------------------------------------------------------------------------------
 
   @Test

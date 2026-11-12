@@ -5,6 +5,13 @@
     <string name="channel_sync_running_name">Synchronisierung läuft</string>
     <string name="channel_sync_running_description">Erscheint kurz, während eine Synchronisierung im Vordergrund läuft.</string>
 
+    <!-- Notifications (SyncNotifier) -->
+    <string name="notification_failure_title">TimeTree-Synchronisierung braucht deine Aufmerksamkeit</string>
+    <string name="notification_access_lost_title">Kein Zugriff auf einen TimeTree-Kalender</string>
+    <string name="notification_access_lost_text">%1$s: Die App hat den Zugriff verloren. Die Kopien bleiben erhalten, bis du sie entfernst.</string>
+    <string name="notification_access_lost_text_unnamed">Die App hat den Zugriff auf einen TimeTree-Kalender verloren. Die Kopien bleiben erhalten, bis du sie entfernst.</string>
+    <string name="notification_running_title">Synchronisierung mit TimeTree</string>
+
     <!-- Common actions -->
     <string name="action_back">Zurück</string>
     <string name="action_cancel">Abbrechen</string>
@@ -36,6 +43,7 @@
     <string name="error_rate_limited">TimeTree bittet die App, langsamer zu machen. Versuche es in etwa einer halben Stunde erneut.</string>
     <string name="error_api_changed">TimeTree hat auf eine Weise geantwortet, die diese App nicht versteht. Prüfe, ob es ein App-Update gibt.</string>
     <string name="error_unknown">Etwas ist schiefgelaufen. Bitte versuche es erneut.</string>
+    <string name="error_removal_failed">Die Kopien konnten nicht entfernt werden, deshalb wurde nichts geändert. Prüfe die Kalenderberechtigung und versuche es erneut.</string>
 
     <!-- Login -->
     <string name="login_title">Bei TimeTree anmelden</string>

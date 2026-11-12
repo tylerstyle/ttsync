@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * Sync status and the auth/rate-limit back-off state (DESIGN.md sections 3, 7 and 9), stored in
- * DataStore. Phase 5 implements it as `DataStoreStatusRepository`. No `android.*` here.
+ * DataStore; implemented by `DataStoreStatusRepository`. No `android.*` here.
  */
 interface StatusRepository {
   val status: Flow<SyncStatus>

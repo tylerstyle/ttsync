@@ -160,8 +160,12 @@ class TargetViewModel(
       try {
         val change = actions.setTarget(info)
         _state.update {
-          if (showResult) it.copy(saving = false, switchResult = change)
-          else it.copy(saving = false, next = change.next)
+          when {
+            // The old copies could not be removed, so the target was not changed.
+            change.failed -> it.copy(saving = false, saveFailed = true)
+            showResult -> it.copy(saving = false, switchResult = change)
+            else -> it.copy(saving = false, next = change.next)
+          }
         }
       } catch (e: CancellationException) {
         throw e

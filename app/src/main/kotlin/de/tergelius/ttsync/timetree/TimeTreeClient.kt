@@ -12,7 +12,7 @@ import kotlinx.serialization.json.JsonObject
  * - **Errors.** Every method throws only [TtError] (and `CancellationException`).
  * - **Pacing.** Every request first waits on [RequestPacer.awaitSlot].
  * - **Session.** The `_session_id` cookie comes from [TtSessionStore.sessionId] and is sent as a
- *   manual `Cookie` header. A new value set by any data response is saved through
+ *   manual `Cookie` header. A new value set by a successful data response is saved through
  *   [TtSessionStore.onSessionRotated].
  * - **Re-login** only after a 401 on a data call or a 403 on `/calendars`, at most one login and one
  *   retry per run (see [beginRun]), and only with [TtSessionStore.autoLoginCredentials]. If that is
@@ -21,8 +21,10 @@ import kotlinx.serialization.json.JsonObject
  *   headers never do.
  * - **Privacy.** No credentials, cookies or event content in logs or exception messages.
  *
- * Calls are not concurrent: the sync engine serializes runs with a process-wide mutex, and the
- * interactive [signIn] happens only while no run can start (signed out).
+ * Concurrency: the sync engine serializes runs with a process-wide mutex, but a screen may call
+ * [calendarsInteractive] or [signIn] while a run is going on. Implementations must make that safe:
+ * no two automatic logins at once, the session one caller stored is used by the other, and the
+ * [RequestPacer] spaces the requests of both.
  */
 interface TimeTreeClient {
   /**
@@ -47,6 +49,13 @@ interface TimeTreeClient {
    * [TtCalendar.isActive]). The engine calls this on every run to notice lost access.
    */
   suspend fun calendars(): List<TtCalendar>
+
+  /**
+   * [calendars] for a screen (Sources), outside a sync run and possibly while one is going on. It
+   * has its own budget of one automatic login, so it neither spends the run's nor fails because the
+   * last run spent it, and its response is not dumped into a run's folder.
+   */
+  suspend fun calendarsInteractive(): List<TtCalendar> = calendars()
 
   /**
    * `GET /calendar/{id}/labels`.

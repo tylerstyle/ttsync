@@ -5,9 +5,9 @@ import androidx.lifecycle.viewModelScope
 import de.tergelius.ttsync.settings.SettingsRepository
 import de.tergelius.ttsync.settings.SetupStep
 import de.tergelius.ttsync.settings.SourceCalendar
-import de.tergelius.ttsync.timetree.TimeTreeClient
 import de.tergelius.ttsync.timetree.TtCalendar
 import de.tergelius.ttsync.timetree.TtError
+import de.tergelius.ttsync.ui.RemovalFailedException
 import de.tergelius.ttsync.ui.UserActions
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +23,9 @@ enum class SourcesError {
   RATE_LIMITED,
   OFFLINE,
   API_CHANGED,
+
+  /** The copies of the deselected calendars could not be removed; nothing was changed. */
+  REMOVAL_FAILED,
   UNKNOWN,
 }
 
@@ -50,9 +53,11 @@ data class SourcesUiState(
     get() = !loading && !saving && options.any { it.selected }
 }
 
-/** Sources (DESIGN.md section 7.2): checkboxes from `GET /calendars`. */
+/**
+ * Sources (DESIGN.md section 7.2): checkboxes from `GET /calendars`, read through
+ * [UserActions.timeTreeCalendars] (safe while a sync runs).
+ */
 class SourcesViewModel(
-  private val client: TimeTreeClient,
   private val settings: SettingsRepository,
   private val actions: UserActions,
 ) : ViewModel() {
@@ -68,7 +73,7 @@ class SourcesViewModel(
     viewModelScope.launch {
       try {
         val selected = settings.current().sources
-        val calendars = client.calendars()
+        val calendars = actions.timeTreeCalendars()
         _state.update { it.copy(loading = false, options = optionsOf(calendars, selected)) }
       } catch (e: CancellationException) {
         throw e
@@ -162,6 +167,7 @@ class SourcesViewModel(
         is TtError.RateLimited -> SourcesError.RATE_LIMITED
         is TtError.Transient -> SourcesError.OFFLINE
         is TtError.ApiChanged -> SourcesError.API_CHANGED
+        is RemovalFailedException -> SourcesError.REMOVAL_FAILED
         else -> SourcesError.UNKNOWN
       }
   }

@@ -1,7 +1,7 @@
 package de.tergelius.ttsync.settings
 
 /**
- * Encrypted TimeTree credentials (DESIGN.md section 6). Phase 5 implements it as
+ * Encrypted TimeTree credentials (DESIGN.md section 6), implemented by
  * `KeystoreCredentialStore`: a non-exportable AES-256-GCM AndroidKeyStore key without user
  * authentication encrypts [Credentials] into `noBackupFilesDir/credentials.enc`, laid out as
  * `[12-byte IV][ciphertext + 16-byte GCM tag]` and written with `AtomicFile`.

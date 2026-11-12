@@ -5,6 +5,8 @@ import de.tergelius.ttsync.settings.SetupStep
 import de.tergelius.ttsync.settings.SourceCalendar
 import de.tergelius.ttsync.settings.SyncInterval
 import de.tergelius.ttsync.sync.RemovalReport
+import de.tergelius.ttsync.sync.SyncFailure
+import de.tergelius.ttsync.sync.SyncProblem
 import de.tergelius.ttsync.timetree.TtError
 import de.tergelius.ttsync.ui.UiTestGraph.Companion.NOW
 import de.tergelius.ttsync.ui.UiTestGraph.Companion.SIGNED_IN
@@ -71,7 +73,7 @@ class UserActionsTest {
   }
 
   @Test
-  fun deselectingSavesFirstThenDeletesCopiesAndAddingStartsAFullSync() = runTest {
+  fun deselectingDeletesCopiesFirstThenSavesAndAddingStartsAFullSync() = runTest {
     val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
     val newCal = SourceCalendar(3, "School")
     val change = g.actions.sourceChange(listOf(family, newCal))
@@ -81,9 +83,9 @@ class UserActionsTest {
     g.actions.saveSources(listOf(family, newCal))
     assertEquals(
       listOf(
-        "settings.setSources([1, 3])",
         "engine.deselect([2])",
         "notifier.clearAccessLost(2)",
+        "settings.setSources([1, 3])",
         "scheduler.updatePeriodic(HOURS_3)",
         "scheduler.runNow(full=true, SETUP)",
       ),
@@ -205,8 +207,101 @@ class UserActionsTest {
       UiTestGraph(settings = configured.copy(sources = listOf(family)), credentials = SIGNED_IN)
     g.actions.removePaused(setOf(1))
     assertEquals(
-      listOf("settings.setSources([])", "scheduler.cancelAll", "engine.deselect([1])"),
-      g.calls.log.take(3),
+      listOf("engine.deselect([1])", "notifier.clearAccessLost(1)", "scheduler.cancelAll"),
+      g.calls.log,
     )
+    assertTrue(g.settings.flow.value.sources.isEmpty())
+  }
+
+  // A failed removal (RemovalReport.failure) changes nothing else ---------------------------------
+
+  private val noPermission = SyncFailure(SyncProblem.NO_CALENDAR_PERMISSION)
+
+  @Test
+  fun aFailedDeselectKeepsTheSelectionAndStartsNoSync() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.engine.removalFailure = noPermission
+    try {
+      g.actions.saveSources(listOf(family, SourceCalendar(3, "School")))
+      fail("expected RemovalFailedException")
+    } catch (e: RemovalFailedException) {
+      assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, e.failure.problem)
+    }
+    assertEquals(configured.sources, g.settings.flow.value.sources)
+    assertEquals(listOf("engine.deselect([2])"), g.calls.log)
+  }
+
+  @Test
+  fun aFailedTargetSwitchKeepsTheOldTargetAndItsSync() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"), calendar(16, "Other"))
+    g.engine.removalFailure = noPermission
+    val change = g.actions.setTarget(calendar(16, "Other"))
+    assertTrue(change.failed)
+    assertEquals(target(15), g.settings.flow.value.target)
+    assertEquals(configured.sources, g.settings.flow.value.sources)
+    assertEquals(
+      listOf(
+        "scheduler.cancelAll",
+        "engine.removeAllCopies(15)",
+        "scheduler.updatePeriodic(HOURS_3)",
+      ),
+      g.calls.log,
+    )
+  }
+
+  @Test
+  fun aFailedRemoveAllCopiesRestoresTheSelectionAndTheSync() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"))
+    g.engine.removalFailure = noPermission
+    val report = g.actions.removeAllCopies()
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, report.failure?.problem)
+    // The engine emptied the selection before deleting; it is back.
+    assertEquals(configured.sources, g.settings.flow.value.sources)
+    assertEquals(SetupStep.DONE, g.actions.currentStep())
+    assertEquals(
+      listOf(
+        "scheduler.cancelAll",
+        "engine.removeAllCopies(15)",
+        "settings.setSources([1, 2])",
+        "scheduler.updatePeriodic(HOURS_3)",
+      ),
+      g.calls.log,
+    )
+  }
+
+  @Test
+  fun aFailedRemovalAtSignOutKeepsTheSignInAndEverythingElse() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"))
+    g.engine.removalFailure = noPermission
+    val report = g.actions.signOut(removeCopies = true)
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, report?.failure?.problem)
+    assertEquals(SIGNED_IN, g.credentials.stored)
+    assertEquals(configured, g.settings.flow.value)
+    assertTrue(g.calls.log.none { it.endsWith(".clear") || it == "wipeLocalFiles" })
+    assertEquals("scheduler.updatePeriodic(HOURS_3)", g.calls.log.last())
+  }
+
+  @Test
+  fun aFailedRemovalOfPausedCalendarsKeepsThemSelected() = runTest {
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.engine.removalFailure = noPermission
+    val report = g.actions.removePaused(setOf(2))
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, report.failure?.problem)
+    assertEquals(configured.sources, g.settings.flow.value.sources)
+    assertEquals(listOf("engine.deselect([2])"), g.calls.log)
+  }
+
+  @Test
+  fun aRateLimitWhileListingCalendarsIsRecordedForTheWorker() = runTest {
+    val g = UiTestGraph(credentials = SIGNED_IN)
+    g.client.calendarsResult = { throw TtError.RateLimited(retryAfter = null) }
+    try {
+      g.actions.timeTreeCalendars()
+      fail("expected RateLimited")
+    } catch (_: TtError.RateLimited) {}
+    assertEquals(NOW + 30.minutes.inWholeMilliseconds, g.status.flow.value.rateLimitedUntil)
   }
 }

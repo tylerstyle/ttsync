@@ -74,7 +74,8 @@ class LoginViewModel(private val actions: UserActions) : ViewModel() {
           it.copy(
             busy = false,
             error = LoginError.RATE_LIMITED,
-            retryAfterMinutes = e.backoff.inWholeMinutes,
+            // Rounded up: the rest of an ongoing back-off may be less than a minute.
+            retryAfterMinutes = (e.backoff.inWholeSeconds + 59) / 60,
           )
         }
       } catch (e: Exception) {

@@ -82,10 +82,11 @@ interface SyncEngine {
   suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean = true): RemovalReport
 
   /**
-   * Deselecting TimeTree calendars, or "Remove copies" for a paused one: removes them from the
-   * selected sources, R1-verified deletes of their mapped copies in the current target, then drops
-   * their snapshots, mappings and cursors. If the deletes fail, the data is kept so the call can be
-   * repeated. Call only after the user confirmed.
+   * Deselecting TimeTree calendars, or "Remove copies" for a paused one: R1-verified deletes of
+   * their mapped copies in the current target, then removes them from the selected sources and drops
+   * their snapshots, mappings and cursors. If the deletes fail, the selection and the data are kept
+   * as they were, so the calendar still shows as selected and the call can be repeated. Call only
+   * after the user confirmed. (No run can start in between: this holds the engine's mutex.)
    */
   suspend fun deselect(ttCalIds: Set<Long>): RemovalReport
 
@@ -164,8 +165,6 @@ class DefaultSyncEngine(
     LOCK.withLock {
       removal("deselect ${ttCalIds.size}") { counter ->
         val current = settings.current()
-        val remaining = current.sources.filterNot { it.id in ttCalIds }
-        if (remaining.size != current.sources.size) settings.setSources(remaining)
         val target = current.target
         if (target != null) {
           val copies =
@@ -174,6 +173,11 @@ class DefaultSyncEngine(
             deleteVerified(target, copies.map { CalendarOp.Delete(it.eventId, it.uuid) }, counter)
           }
         }
+        // Only after the deletes went through: a failed removal leaves the calendar selected, so
+        // the user can retry (phase 4 review, SHOULD-FIX-1).
+        val sources = settings.current().sources
+        val remaining = sources.filterNot { it.id in ttCalIds }
+        if (remaining.size != sources.size) settings.setSources(remaining)
         db.transaction {
           for (id in ttCalIds) {
             db.snapshots.deleteCalendar(id)
@@ -299,7 +303,11 @@ class DefaultSyncEngine(
             calendarCall { gateway.checkRows(target, mapOf(eventId to op.uuid)) }[eventId]
               ?: RowCheck.MISSING
           if (check == RowCheck.OURS) {
-            log.e("precondition fails on an own row (uuid=${TtLog.short(op.uuid)}); stopping")
+            log.e(
+              "precondition fails on an own row: ${op.javaClass.simpleName} eventId=$eventId " +
+                "uuid=${TtLog.short(op.uuid)} check=$check, replayed alone from a batch of " +
+                "${ops.size}; stopping"
+            )
             fail(SyncProblem.CALENDAR_WRITE_FAILED)
           }
           OpResult.Rejected(check)
@@ -479,8 +487,11 @@ class DefaultSyncEngine(
       val c = report.counts
       log.i(
         "run finished id=${request.runId} ok=${report.succeeded} problem=${failure?.problem} " +
-          "added=${c.added} updated=${c.updated} deleted=${c.deleted} adopted=${c.adopted} " +
-          "rejected=${c.rejected} unmanaged=${c.unmanagedMarked} unmatched=${c.unmatchedOverrides}"
+          "written=${c.writes} added=${c.added} updated=${c.updated} deleted=${c.deleted} " +
+          "skipped=${c.skipped} adopted=${c.adopted} rejected=${c.rejected} " +
+          "unmanaged=${c.unmanagedMarked} unmatched=${c.unmatchedOverrides} " +
+          "paused=${report.calendars.count { it.state == CalendarState.PAUSED }} " +
+          "warnings=${report.warnings.sorted().joinToString(",").ifEmpty { "none" }}"
       )
       return report
     }

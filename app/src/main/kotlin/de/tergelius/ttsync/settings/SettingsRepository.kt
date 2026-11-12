@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 
 /**
- * The user's choices (DESIGN.md section 7), stored in DataStore. Phase 5 implements it as
+ * The user's choices (DESIGN.md section 7), stored in DataStore and implemented by
  * `DataStoreSettingsRepository`; UI previews and tests use fakes. No `android.*` here, so the sync
  * engine can depend on it.
  */

@@ -161,20 +161,32 @@ class FakeScheduler(private val calls: Calls) : SyncScheduler {
   }
 }
 
-class FakeEngine(private val calls: Calls) : SyncEngine {
+/**
+ * Like the real engine for what the UI relies on: [removeAllCopies] with `stopSyncing` empties the
+ * selection before deleting, [deselect] changes it only after the deletes went through. A failure
+ * ([removalFailure]) comes back in the report, as the engine does.
+ */
+class FakeEngine(private val calls: Calls, private val settings: FakeSettings? = null) : SyncEngine {
   var removal = RemovalReport(deleted = 0, rejected = 0)
   var removeAllError: Exception? = null
+
+  /** If set, removals fail with it (returned in the report, not thrown). */
+  var removalFailure: SyncFailure? = null
 
   override suspend fun run(request: SyncRequest): SyncReport = error("not used by the UI")
 
   override suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean): RemovalReport {
     calls.add("engine.removeAllCopies(${target.calendarId})")
+    if (stopSyncing) settings?.flow?.update { it.copy(sources = emptyList()) }
     removeAllError?.let { throw it }
+    removalFailure?.let { return RemovalReport(deleted = 0, rejected = 0, failure = it) }
     return removal
   }
 
   override suspend fun deselect(ttCalIds: Set<Long>): RemovalReport {
     calls.add("engine.deselect(${ttCalIds.sorted()})")
+    removalFailure?.let { return RemovalReport(deleted = 0, rejected = 0, failure = it) }
+    settings?.flow?.update { s -> s.copy(sources = s.sources.filterNot { it.id in ttCalIds }) }
     return removal
   }
 
@@ -260,7 +272,7 @@ class UiTestGraph(
   val settings = FakeSettings(calls, settings)
   val status = FakeStatus(calls, status)
   val scheduler = FakeScheduler(calls)
-  val engine = FakeEngine(calls)
+  val engine = FakeEngine(calls, this.settings)
   val gateway = FakeGateway()
   val client = FakeClient(calls)
   val notifier = FakeNotifier(calls)

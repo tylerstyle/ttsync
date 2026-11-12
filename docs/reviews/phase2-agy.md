@@ -177,3 +177,21 @@ None.
       ?: (root["error"] as? JsonPrimitive)
       ?: root["code"]
   ```
+
+---
+
+## Resolution (android-claude, phase 5, 2026-11-12)
+
+- SHOULD-FIX-1: fixed. `dataCall` saves a rotated `_session_id` only from a 2xx response; cookies on
+  error responses (auth failures, 4xx, 429, a proxy's 5xx page) are ignored. New test
+  `cookiesOfErrorResponsesAreNeverSaved`.
+- SHOULD-FIX-2: fixed. `TtError.RateLimited` takes `backoff` as a constructor parameter (default:
+  `Retry-After`, at least 30 min); `DefaultRequestPacer` passes the exact remaining time, so the
+  engine's and the login's `setRateLimitedUntil` keep it. `DefaultRequestPacerTest` checks it.
+- NIT-1: fixed twice: `dataCall` treats an empty session as none (logs in first), and
+  `StoredSessionStore.sessionId()` never returns an empty string. New tests
+  `anEmptyStoredSessionCountsAsNone`, `StoredSessionStoreTest`.
+- NIT-2, NIT-3: not changed (no behaviour difference for real traffic).
+- Also in phase 5: request exchanges are serialized by a client lock, and the Sources screen uses
+  `calendarsInteractive()` with its own login budget (no double login while a sync runs). Tests
+  `interactiveCallsHaveTheirOwnLoginBudgetAndAreNotDumped`, `aScreenAndARunAtOnceLogInOnlyOnce`.

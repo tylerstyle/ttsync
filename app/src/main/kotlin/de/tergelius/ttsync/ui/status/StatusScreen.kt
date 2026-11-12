@@ -192,7 +192,11 @@ fun StatusContent(state: StatusUiState, navigation: StatusNavigation, fixes: Sta
     HealthCard(state, navigation, fixes)
     SyncCard(state, navigation, fixes)
     WarningsCard(state, fixes)
-    if (state.actionFailed) ErrorBox(stringResource(R.string.error_unknown), onRetry = null)
+    if (state.removalFailed) {
+      ErrorBox(stringResource(R.string.error_removal_failed), onRetry = null)
+    } else if (state.actionFailed) {
+      ErrorBox(stringResource(R.string.error_unknown), onRetry = null)
+    }
   }
 }
 

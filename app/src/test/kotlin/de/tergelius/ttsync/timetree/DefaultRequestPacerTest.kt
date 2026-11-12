@@ -9,7 +9,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -79,7 +78,8 @@ class DefaultRequestPacerTest {
       fail("expected RateLimited")
     } catch (e: TtError.RateLimited) {
       assertEquals(20.minutes, e.retryAfter)
-      assertTrue(e.backoff >= TtError.RateLimited.MIN_BACKOFF)
+      // The remaining time, not stretched to MIN_BACKOFF again (phase 2 review, SHOULD-FIX-2).
+      assertEquals(20.minutes, e.backoff)
     }
 
     pacer.backOff(1.minutes) // a shorter back-off never shortens a longer one
@@ -89,6 +89,7 @@ class DefaultRequestPacerTest {
       fail("expected RateLimited")
     } catch (e: TtError.RateLimited) {
       assertEquals(1.minutes, e.retryAfter)
+      assertEquals(1.minutes, e.backoff)
     }
 
     time.now += 1.minutes.inWholeMilliseconds

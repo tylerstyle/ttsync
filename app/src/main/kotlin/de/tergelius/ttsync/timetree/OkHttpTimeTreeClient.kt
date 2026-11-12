@@ -8,6 +8,8 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -33,19 +35,25 @@ import okhttp3.Response
  * Request rules on top of the [TimeTreeClient] contract:
  * - Every request sends `X-Timetreea` and `Content-Type: application/json`; data requests add the
  *   session as a manual `Cookie: _session_id=…` header. Login requests carry no cookie.
- * - A response that sets a new `_session_id` (except an auth failure, whose cookie is worthless) is
- *   saved through [TtSessionStore.onSessionRotated]. An expired or empty cookie (a deletion) is
- *   ignored.
- * - A data call without any stored session logs in first (that is the run's one login, and the
- *   request after it counts as "right after login").
+ * - A successful (2xx) response that sets a new `_session_id` is saved through
+ *   [TtSessionStore.onSessionRotated]. A cookie set by an error response (an auth failure, or a
+ *   proxy's 5xx page) is worthless and ignored, as is an expired or empty one (a deletion).
+ * - A data call without a stored session (none, or an empty one) logs in first (that is the run's
+ *   one login, and the request after it counts as "right after login").
  * - Auth failure = HTTP 401 on any data call, or 403 on `/calendars`. The first one in a run logs in
  *   again and retries once. The same failure right after that login is [TtError.AuthRejected]; a
  *   later one in the same run is [TtError.Transient], so the next run starts with a fresh budget.
  * - `-495` (any status) and HTTP 429 are [TtError.RateLimited] and put the [pacer] into back-off.
  * - 403/404 on a calendar's labels or events is [TtError.AccessLost]; 5xx and 408 are
  *   [TtError.Transient]; any other status is [TtError.ApiChanged].
- * - Every data response body (errors too, with `_http<code>` in the name) goes to [rawSink]. Login
- *   bodies and all headers never do, and nothing secret is logged.
+ * - Every data response body of a run (errors too, with `_http<code>` in the name) goes to
+ *   [rawSink]. Login bodies, all headers and [calendarsInteractive] never do, and nothing secret is
+ *   logged.
+ * - **Concurrency.** A run and a screen ([calendarsInteractive]) may call at the same time. Each
+ *   request exchange (session read, request, the automatic login and retry) holds one lock, so two
+ *   callers never log in at once and the second one uses the session the first one stored. The
+ *   [pacer] spaces requests of both. A run has one login budget ([beginRun]); every interactive call
+ *   has its own, so neither spends nor depends on the other's.
  */
 class OkHttpTimeTreeClient(
   private val http: OkHttpClient,
@@ -58,17 +66,25 @@ class OkHttpTimeTreeClient(
   private val maxPages: Int = TimeTreeApi.MAX_PAGES,
 ) : TimeTreeClient {
 
-  /** True until this run spends its one automatic login (and the one retry after it). */
-  @Volatile private var reloginAvailable = true
+  /** One automatic login (and the one retry after it), spent at most once. */
+  private class LoginBudget {
+    @Volatile var available = true
+  }
+
+  /** The current run's budget; [beginRun] starts a fresh one. */
+  @Volatile private var runBudget = LoginBudget()
+
+  /** Serializes request exchanges of a run and of screens (see the class comment). */
+  private val exchange = Mutex()
 
   override suspend fun signIn(email: String, password: String): String {
-    val sessionId = login(TtCredentials(email, password))
+    val sessionId = exchange.withLock { login(TtCredentials(email, password)) }
     log.i("timetree: interactive sign-in succeeded")
     return sessionId
   }
 
   override fun beginRun(runId: String) {
-    reloginAvailable = true
+    runBudget = LoginBudget()
     try {
       rawSink.beginRun(runId)
     } catch (e: Exception) {
@@ -77,13 +93,17 @@ class OkHttpTimeTreeClient(
   }
 
   override suspend fun calendars(): List<TtCalendar> =
-    dataCall(Endpoint.Calendars) { body ->
-      decodeTt("calendars") { TtJson.decodeFromString(TtCalendarsResponse.serializer(), body) }
-        .calendars
-    }
+    dataCall(Endpoint.Calendars, runBudget, dump = true, decode = ::decodeCalendars)
+
+  override suspend fun calendarsInteractive(): List<TtCalendar> =
+    dataCall(Endpoint.Calendars, LoginBudget(), dump = false, decode = ::decodeCalendars)
+
+  private fun decodeCalendars(body: String): List<TtCalendar> =
+    decodeTt("calendars") { TtJson.decodeFromString(TtCalendarsResponse.serializer(), body) }
+      .calendars
 
   override suspend fun labels(calendarId: Long): List<TtLabel> =
-    dataCall(Endpoint.Labels(calendarId)) { body ->
+    dataCall(Endpoint.Labels(calendarId), runBudget, dump = true) { body ->
       decodeTt("labels") { TtJson.decodeFromString(TtLabelsResponse.serializer(), body) }.labels
     }
 
@@ -94,10 +114,11 @@ class OkHttpTimeTreeClient(
     val requested = HashSet<Long>()
     var cursor = since
     var pages = 0
+    val budget = runBudget
     while (true) {
       if (cursor != null) requested += cursor
       val page =
-        dataCall(Endpoint.Events(calendarId, cursor)) { body ->
+        dataCall(Endpoint.Events(calendarId, cursor), budget, dump = true) { body ->
           decodeTt("events page") { TtJson.decodeFromString(TtEventsPage.serializer(), body) }
         }
       pages++
@@ -136,19 +157,36 @@ class OkHttpTimeTreeClient(
     }
   }
 
-  /** One GET with the session, the one re-login per run, error mapping and the raw dump. */
-  private suspend fun <T> dataCall(endpoint: Endpoint, decode: (String) -> T): T {
+  /**
+   * One GET with the session, the one re-login of [budget], error mapping and (if [dump]) the raw
+   * dump. The whole exchange holds [exchange].
+   */
+  private suspend fun <T> dataCall(
+    endpoint: Endpoint,
+    budget: LoginBudget,
+    dump: Boolean,
+    decode: (String) -> T,
+  ): T = exchange.withLock { dataExchange(endpoint, budget, dump, decode) }
+
+  private suspend fun <T> dataExchange(
+    endpoint: Endpoint,
+    budget: LoginBudget,
+    dump: Boolean,
+    decode: (String) -> T,
+  ): T {
     var justLoggedIn = false
+    // An empty value is no session: sending `_session_id=` could only earn a 401.
     var sessionId =
-      sessions.sessionId()
-        ?: autoLogin(endpoint, reason = "no session").also { justLoggedIn = true }
+      sessions.sessionId()?.takeIf { it.isNotEmpty() }
+        ?: autoLogin(endpoint, budget, reason = "no session").also { justLoggedIn = true }
     val url = endpoint.url(baseUrl)
     while (true) {
       val response = send(dataRequest(url, sessionId))
       val status = response.code
       val authFailure = status == 401 || (status == 403 && endpoint is Endpoint.Calendars)
-      if (!authFailure) saveRotatedSession(url, response.headers, sessionId)
-      record(endpoint, response)
+      // Only a successful response's cookie is a session; an error page's cookie is worthless.
+      if (response.isSuccessful) saveRotatedSession(url, response.headers, sessionId)
+      if (dump) record(endpoint, response)
       if (response.isSuccessful) {
         log.d("timetree: ${endpoint.logName} -> $status")
         return decode(response.body)
@@ -161,9 +199,9 @@ class OkHttpTimeTreeClient(
           sessions.onAutoLoginRejected()
           throw TtError.AuthRejected(apiCode)
         }
-        authFailure && !reloginAvailable -> throw TtError.Transient(status)
+        authFailure && !budget.available -> throw TtError.Transient(status)
         authFailure -> {
-          sessionId = autoLogin(endpoint, reason = "HTTP $status")
+          sessionId = autoLogin(endpoint, budget, reason = "HTTP $status")
           justLoggedIn = true
         }
         (status == 403 || status == 404) && endpoint.calendarId != null ->
@@ -174,10 +212,10 @@ class OkHttpTimeTreeClient(
     }
   }
 
-  /** The run's one automatic login, with [TtSessionStore]'s credentials and block bookkeeping. */
-  private suspend fun autoLogin(endpoint: Endpoint, reason: String): String {
-    if (!reloginAvailable) throw TtError.LoginRequired()
-    reloginAvailable = false
+  /** The [budget]'s one automatic login, with [TtSessionStore]'s credentials and block bookkeeping. */
+  private suspend fun autoLogin(endpoint: Endpoint, budget: LoginBudget, reason: String): String {
+    if (!budget.available) throw TtError.LoginRequired()
+    budget.available = false
     val credentials = sessions.autoLoginCredentials()
     if (credentials == null) {
       log.w("timetree: ${endpoint.logName}: $reason, automatic sign-in not allowed")

@@ -116,7 +116,7 @@ class SetupViewModelsTest {
         credentials = SIGNED_IN,
       )
     g.client.calendarsResult = { listOf(TtCalendar(1, "Family"), TtCalendar(2, "Football")) }
-    val vm = SourcesViewModel(g.client, g.settings, g.actions)
+    val vm = SourcesViewModel(g.settings, g.actions)
     assertFalse(vm.state.value.loading)
     vm.toggle(2)
     vm.save()
@@ -126,14 +126,17 @@ class SetupViewModelsTest {
     vm.confirmRemoval()
     assertNull(vm.state.value.confirmRemoval)
     assertEquals(SetupStep.DONE, vm.state.value.next)
-    assertEquals(listOf("settings.setSources([1])", "engine.deselect([2])"), g.calls.log.take(2))
+    assertEquals(
+      listOf("engine.deselect([2])", "notifier.clearAccessLost(2)", "settings.setSources([1])"),
+      g.calls.log.take(3),
+    )
   }
 
   @Test
   fun sourcesNeedOneSelectionAndContinueToTarget() {
     val g = UiTestGraph(credentials = SIGNED_IN)
     g.client.calendarsResult = { listOf(TtCalendar(1, "Family")) }
-    val vm = SourcesViewModel(g.client, g.settings, g.actions)
+    val vm = SourcesViewModel(g.settings, g.actions)
     assertFalse(vm.state.value.canSave)
     vm.toggle(1)
     vm.save()
@@ -145,7 +148,7 @@ class SetupViewModelsTest {
   fun sourcesShowSignInAgainWhenTheSessionIsGone() {
     val g = UiTestGraph(credentials = SIGNED_IN)
     g.client.calendarsResult = { throw TtError.LoginRequired() }
-    val vm = SourcesViewModel(g.client, g.settings, g.actions)
+    val vm = SourcesViewModel(g.settings, g.actions)
     assertEquals(SourcesError.SIGN_IN, vm.state.value.loadError)
   }
 

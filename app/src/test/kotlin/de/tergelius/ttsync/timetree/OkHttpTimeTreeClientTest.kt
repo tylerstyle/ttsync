@@ -5,6 +5,9 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -566,5 +569,88 @@ class OkHttpTimeTreeClientTest {
 
     assertEquals(emptyList<String>(), store.rotated)
     assertEquals("sess-old", store.session)
+  }
+
+  // Phase 2 review fixes -----------------------------------------------------------------------
+
+  @Test
+  fun cookiesOfErrorResponsesAreNeverSaved() = runTest {
+    // SHOULD-FIX-1: only a 2xx response rotates the session, not a proxy's error page.
+    server.enqueue(response("oops", 503, sessionCookie("sess-proxy")))
+    server.enqueue(response(errorBody(-1), 404, sessionCookie("sess-404")))
+    server.enqueue(response(errorBody(-495), 429, sessionCookie("sess-429")))
+
+    expectError<TtError.Transient>(thrown) { client.calendars() }
+    expectError<TtError.AccessLost>(thrown) { client.labels(7) }
+    expectError<TtError.RateLimited>(thrown) { client.events(7, since = null) }
+
+    assertEquals(emptyList<String>(), store.rotated)
+    assertEquals("sess-old", store.session)
+  }
+
+  @Test
+  fun anEmptyStoredSessionCountsAsNone() = runTest {
+    // NIT-1: no request with `_session_id=`; log in first instead.
+    store.session = ""
+    server.enqueue(response("{}", 200, sessionCookie("sess-new")))
+    server.enqueue(response(fixture("calendars.json")))
+
+    client.calendars()
+
+    assertEquals("PUT", take().method)
+    assertEquals("_session_id=sess-new", take().cookie())
+    assertEquals(listOf("sess-new"), store.succeeded)
+  }
+
+  // Interactive calls (Sources screen) ----------------------------------------------------------
+
+  @Test
+  fun interactiveCallsHaveTheirOwnLoginBudgetAndAreNotDumped() = runTest {
+    // The run spends its one login.
+    server.enqueue(response(errorBody(-1), 401))
+    server.enqueue(response("{}", 200, sessionCookie("sess-run")))
+    server.enqueue(response(fixture("calendars.json")))
+    client.calendars()
+    val dumped = sink.names.toList()
+
+    // The session expires again: a screen may still log in once, without touching the run's budget.
+    server.enqueue(response(errorBody(-1), 401))
+    server.enqueue(response("{}", 200, sessionCookie("sess-screen")))
+    server.enqueue(response(fixture("calendars.json")))
+    assertEquals(1, client.calendarsInteractive().size)
+
+    assertEquals(listOf("sess-run", "sess-screen"), store.succeeded)
+    assertEquals(dumped, sink.names) // the screen's responses are not in the run's dump
+
+    // The run's budget is still spent.
+    server.enqueue(response(errorBody(-1), 401))
+    expectError<TtError.Transient>(thrown) { client.labels(7) }
+    assertEquals(7, server.requestCount)
+  }
+
+  @Test
+  fun aScreenAndARunAtOnceLogInOnlyOnce() = runTest {
+    // Both callers find the session expired; the second one waits and uses the stored new session.
+    server.dispatcher =
+      object : Dispatcher() {
+        override fun dispatch(request: RecordedRequest): MockResponse =
+          when {
+            request.method == "PUT" -> response("{}", 200, sessionCookie("sess-new"))
+            request.headers["Cookie"] == "_session_id=sess-new" -> response(fixture("calendars.json"))
+            else -> response(errorBody(-1), 401)
+          }
+      }
+
+    val results =
+      listOf(
+          async(Dispatchers.Default) { client.calendars() },
+          async(Dispatchers.Default) { client.calendarsInteractive() },
+        )
+        .awaitAll()
+
+    assertEquals(listOf(1, 1), results.map { it.size })
+    assertEquals(listOf("sess-new"), store.succeeded)
+    val logins = List(server.requestCount) { take() }.count { it.method == "PUT" }
+    assertEquals(1, logins)
   }
 }

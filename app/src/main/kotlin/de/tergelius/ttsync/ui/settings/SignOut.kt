@@ -87,8 +87,12 @@ class SignOutViewModel(
     _state.update { it.copy(busy = true, failed = false) }
     viewModelScope.launch {
       try {
-        actions.signOut(removeCopies = current.hasTarget && current.removeCopies)
-        _state.update { it.copy(busy = false, dialogOpen = false, done = true) }
+        val removal = actions.signOut(removeCopies = current.hasTarget && current.removeCopies)
+        _state.update {
+          // A failed removal keeps everything: still signed in, the dialog stays open.
+          if (removal?.failure != null) it.copy(busy = false, failed = true)
+          else it.copy(busy = false, dialogOpen = false, done = true)
+        }
       } catch (e: CancellationException) {
         throw e
       } catch (_: Exception) {

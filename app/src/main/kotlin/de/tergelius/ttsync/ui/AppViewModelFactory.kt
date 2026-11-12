@@ -41,7 +41,7 @@ fun appViewModelFactory(graph: AppGraph, context: Context): ViewModelProvider.Fa
   return viewModelFactory {
     initializer { MainViewModel(actions) }
     initializer { LoginViewModel(actions) }
-    initializer { SourcesViewModel(graph.timeTreeClient, graph.settingsRepository, actions) }
+    initializer { SourcesViewModel(graph.settingsRepository, actions) }
     initializer {
       TargetViewModel(graph.calendarGateway, graph.settingsRepository, deviceChecks, actions)
     }

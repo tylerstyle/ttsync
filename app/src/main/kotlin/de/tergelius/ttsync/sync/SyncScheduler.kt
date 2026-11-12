@@ -7,14 +7,17 @@ import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.flow.Flow
 
 /**
- * WorkManager scheduling (DESIGN.md section 9). Phase 5 implements it as [WorkManagerSyncScheduler].
+ * WorkManager scheduling (DESIGN.md section 9), implemented by [WorkManagerSyncScheduler].
  *
  * Contract:
  * - Periodic work [PERIODIC_WORK] runs [SyncWorker] at the chosen [SyncInterval] (never shorter
  *   than 1 h) with [FLEX] flex, `NetworkType.CONNECTED`, and exponential backoff from [BACKOFF].
  * - [runNow] enqueues the one-time [NOW_WORK] as expedited work (falling back to a normal request
  *   when out of quota), replacing a pending one.
- * - Nothing is scheduled while setup is incomplete or no TimeTree calendar is active.
+ * - Periodic work is only (re-)enqueued while syncing is wanted: signed in, at least one TimeTree
+ *   calendar selected and a target set. The "Keep running" step does not have to be done, because
+ *   the UI schedules as soon as the target is confirmed. App start also skips it when the last run
+ *   found every selected calendar paused.
  */
 interface SyncScheduler {
   /** App start: enqueue the periodic work with `KEEP`, if setup is complete. */
@@ -60,22 +63,3 @@ data class ScheduleState(
   val runNowPending: Boolean = false,
 )
 
-/** Phase 5 implements this. */
-class WorkManagerSyncScheduler(context: Context) : SyncScheduler {
-  private val appContext = context.applicationContext
-
-  override fun ensurePeriodic(): Unit = notYet()
-
-  override fun updatePeriodic(interval: SyncInterval): Unit = notYet()
-
-  override fun cancelPeriodic(): Unit = notYet()
-
-  override fun runNow(full: Boolean, trigger: SyncTrigger): Unit = notYet()
-
-  override fun cancelAll(): Unit = notYet()
-
-  override val state: Flow<ScheduleState>
-    get() = notYet()
-
-  private fun notYet(): Nothing = TODO("phase 5: SyncScheduler (${appContext.packageName})")
-}

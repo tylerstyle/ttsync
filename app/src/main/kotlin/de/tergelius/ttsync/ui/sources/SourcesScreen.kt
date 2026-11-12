@@ -174,6 +174,7 @@ private fun SourcesErrorBox(
       SourcesError.RATE_LIMITED -> stringResource(R.string.error_rate_limited)
       SourcesError.OFFLINE -> stringResource(R.string.error_offline)
       SourcesError.API_CHANGED -> stringResource(R.string.error_api_changed)
+      SourcesError.REMOVAL_FAILED -> stringResource(R.string.error_removal_failed)
       SourcesError.UNKNOWN -> stringResource(R.string.error_unknown)
     }
   if (error == SourcesError.SIGN_IN) {

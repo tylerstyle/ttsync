@@ -220,7 +220,11 @@ fun SettingsContent(
         onAction = navigation.about,
       )
     }
-    if (state.failed) ErrorBox(stringResource(R.string.error_unknown), onRetry = null)
+    if (state.removalFailed) {
+      ErrorBox(stringResource(R.string.error_removal_failed), onRetry = null)
+    } else if (state.failed) {
+      ErrorBox(stringResource(R.string.error_unknown), onRetry = null)
+    }
   }
 }
 
