@@ -3,7 +3,7 @@
 Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
 [DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
 
-Runs 1–6 on 2026-11-12 and run 7 on 2026-11-17, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
+Runs 1–6 on 2026-11-12 and runs 7–8 on 2026-11-17, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
 driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
@@ -11,7 +11,7 @@ timed events, "TT test weekly" (weekly series with one deleted and one moved occ
 Google calendar, which already held 7 events of its own.
 
 **Safety invariant held in every run:** the target's 7 own events were hashed before the run and
-compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 each in runs 5, 6 and 7): never
+compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 each in runs 5, 6 and 7, 6 in run 8): never
 changed. After each run the target held
 only those 7 events again.
 
@@ -164,6 +164,24 @@ Every INCREMENTAL run asked the change list from the high-water mark minus 2 min
 in that overlap wrote nothing. A FULL sets the mark back to the newest live event (the live feed has
 no tombstones), so the next INCREMENTAL reads the recent tombstones once more, which is harmless.
 
+## Run 8: the D1 fix, debug build `441704f`, restore reproduced by hand
+
+Google's restore in run 7 happened by chance, so run 8 made it happen on purpose. Calendar sync of
+the Google account was turned off, so a deleted copy stayed `deleted = 1, dirty = 1`. Then the device
+test agent wrote that one row back as a sync adapter (`content update` on the provider with
+`caller_is_syncadapter=true`, restricted by `_id`, calendar and marker), exactly the state Google's
+sync had left in run 7.
+
+| Area | Result |
+|---|---|
+| Setup and two new events "Probe C" and "Probe D": Added 2, both uploaded | Pass |
+| Calendar sync off; "Probe C" deleted in TimeTree, "Sync now": INCREMENTAL, Deleted 1; the row stays `deleted = 1, dirty = 1`; SyncDb schema 4, `pending_delete` holds its `_id` | Pass |
+| The row written back (`deleted = 0, dirty = 0`, `_sync_id`, etag and marker unchanged); only that row changed | Pass |
+| Next "Sync now": `copy of … is back after its delete; deleting it again`, Deleted 1; the calendar is exactly as before the restore | Pass |
+| Calendar sync on: Google uploads the delete and purges the row; the next run forgets the entry and writes nothing | Pass |
+| Regression: "Probe D" deleted normally, purged, the entry forgotten one run later | Pass |
+| Remove all copies, uninstall; every sync setting of the account as at the start | Pass |
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -178,7 +196,7 @@ no tombstones), so the next INCREMENTAL reads the recent tombstones once more, w
 | L2 | Low | The swatch of a "Midnight black" label was nearly invisible in the dark theme. | 0.2.0 fix round: every swatch has a 1 dp outline. Verified in run 6. |
 | L3 | Low | Extra space under the "Events: …" line on Sources. | 0.2.0 fix round: the line sits right under its calendar's name, like a subtitle. Verified in run 6. |
 | L4 | Low | German relative times in parentheses started with a capital: "(Vor 1 Minute)". | 0.2.0 fix round: the first letter is lower case, locale-aware: "(vor 1 Minute)"; in English "(5 minutes ago)" is unchanged and "(In 40 minutes)" becomes "(in 40 minutes)". Verified in run 6. |
-| D1 | High | Google's sync adapter restored a copy the app had just deleted (`deleted = 1`, not uploaded yet) to its unchanged server version, right after a feed sync of the target calendar. The app had dropped the mapping with the delete, so it never looked at the row again: the deleted TimeTree date stayed in Google, and a Full resync counted it as unmanaged. Seen once, in run 7; 0.2.0 had the same gap. | 0.2.1: every deleted copy is watched (`pending_delete`, schema 4) until its row is gone, and deleted again if it comes back (DESIGN.md section 5, step 6a). |
+| D1 | High | Google's sync adapter restored a copy the app had just deleted (`deleted = 1`, not uploaded yet) to its unchanged server version, right after a feed sync of the target calendar. The app had dropped the mapping with the delete, so it never looked at the row again: the deleted TimeTree date stayed in Google, and a Full resync counted it as unmanaged. Seen once, in run 7; 0.2.0 had the same gap. | 0.2.1: every deleted copy is watched (`pending_delete`, schema 4) until its row is gone, and deleted again if it comes back (DESIGN.md section 5, step 6a). Verified in run 8 with the restore reproduced by hand. |
 | L5 | Low | Android 13+'s Settings → App languages didn't offer the app: no locale config. | 0.2.0 fix round: AGP generates one for English and German. Verified in run 6. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in
@@ -191,8 +209,8 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
 - **TalkBack** on the new screens (needs a person at the phone; see run 6): the "Choose events" action of the events line, the label rows
   (colour name only when the row doesn't show it already) and the checkbox rows.
 - **D1 on the phone:** what made Google's sync put the deleted copy back is unknown (seen once, right
-  after a feed sync of the target calendar). The re-delete of 0.2.1 is to be checked by reproducing
-  the restore by hand (run 8).
+  after a feed sync of the target calendar). Run 8 checked 0.2.1's re-delete with the restore
+  reproduced by hand.
 - **Large calendars** on a real account: a change list of more than one page (`chunk == true`)
   has never been seen, and the 6-hour FULL of a multi-page feed ran only in unit tests. The test
   calendar always fit on one page.
