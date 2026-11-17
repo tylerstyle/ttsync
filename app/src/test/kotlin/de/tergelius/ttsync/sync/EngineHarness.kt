@@ -177,7 +177,6 @@ class EngineHarness {
     userRows[id] = gateway.rows.getValue(id)
   }
 
-  /** Adds a foreign row after setup (it joins the safety check). */
   /** Copies the app deleted in the target (never a foreign, unmanaged or other row). */
   fun deletedCopies(): List<Long> =
     gateway.rows.values
@@ -191,6 +190,7 @@ class EngineHarness {
     gateway.rows[id] = gateway.rows.getValue(id).copy(deleted = false)
   }
 
+  /** Adds a foreign row after setup (it joins the safety check). */
   fun addForeign(calendarId: Long, title: String, description: String?, id: Long? = null): Long {
     val rowId =
       if (id == null) gateway.addRow(calendarId, title, description)
