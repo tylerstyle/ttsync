@@ -90,7 +90,8 @@ interface TimeTreeClient {
    * known events come again. The result is never complete: absence from it means nothing.
    *
    * Returns null if the list can't be used: it doesn't behave as observed (out of order, a `since`
-   * that doesn't move forward, too many pages), answers 403/404, or sends a page that doesn't parse.
+   * that doesn't move forward, too many pages), answers 401/403/404 (no sign-in is tried), or sends a
+   * page that doesn't parse.
    * The engine then reads the calendar completely with [events], which decides about lost access.
    * Other errors (offline, rate limit, sign-in), duplicates and undecodable events are handled as in
    * [events].

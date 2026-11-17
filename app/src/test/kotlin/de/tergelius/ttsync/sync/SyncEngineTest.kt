@@ -175,11 +175,6 @@ class SyncEngineTest {
 
   // Google's sync restores a deleted copy (device test 0.2.1, step 5) ---------------------------
 
-  /** What Google's sync adapter did on the phone: the deleted row is back, unchanged and uploaded. */
-  private fun googleRestores(eventId: Long) {
-    h.gateway.rows[eventId] = h.gateway.rows.getValue(eventId).copy(deleted = false)
-  }
-
   @Test
   fun aCopyGoogleRestoresAfterItsDeleteIsDeletedAgainUntilItIsGone() = runTest {
     h.sync().assertOk()
@@ -190,7 +185,7 @@ class SyncEngineTest {
 
     h.now += 60_000L
     assertEquals(0, h.sync().assertOk().counts.writes) // still deleted = 1: nothing to do
-    googleRestores(a2)
+    h.googleRestores(a2)
     h.now += 60_000L
     val again = h.sync().assertOk()
     assertEquals(SyncMode.INCREMENTAL, again.calendars.single().mode)
@@ -212,7 +207,7 @@ class SyncEngineTest {
     val a2 = idOf(A2)
     h.setFilter(CAL_A, EventFilter(excludeTerms = listOf("lunch")))
     assertEquals(1, h.sync().assertOk().counts.deleted) // the filter excludes A2
-    googleRestores(a2)
+    h.googleRestores(a2)
     h.setFilter(CAL_A, null) // A2 is wanted again: the restored row is its copy
     val report = h.sync().assertOk()
     assertEquals(0, report.counts.deleted)
@@ -230,7 +225,7 @@ class SyncEngineTest {
     val b1 = idOf(B1)
     h.client.deactivate(CAL_B, B1)
     assertEquals(1, h.sync().assertOk().counts.deleted)
-    googleRestores(b1)
+    h.googleRestores(b1)
     h.client.calendars.removeAll { it.id == CAL_B } // access lost: B pauses
     val report = h.sync().assertOk()
     assertEquals(0, report.counts.deleted)
@@ -244,7 +239,7 @@ class SyncEngineTest {
     val a2 = idOf(A2)
     h.client.deactivate(CAL_A, A2)
     h.sync().assertOk()
-    googleRestores(a2)
+    h.googleRestores(a2)
     h.now += DefaultSyncEngine.PENDING_DELETE_MAX_AGE_MILLIS
     h.sync().assertOk()
     assertTrue(h.store.pendingDeletes.all().isEmpty())
@@ -255,6 +250,88 @@ class SyncEngineTest {
     assertEquals(1, h.store.pendingDeletes.all().size)
     h.engine.removeAllCopies(h.target, stopSyncing = false)
     assertTrue(h.store.pendingDeletes.all().isEmpty())
+  }
+
+  @Test
+  fun deselectAndStopSyncingForgetTheWatchedDeletes() = runTest {
+    h.selectB()
+    h.sync().assertOk()
+    h.client.deactivate(CAL_A, A2)
+    h.client.deactivate(CAL_B, B1)
+    h.sync().assertOk()
+    assertEquals(setOf(CAL_A, CAL_B), h.store.pendingDeletes.all().map { it.ttCalId }.toSet())
+    h.engine.deselect(setOf(CAL_B))
+    assertEquals(listOf(CAL_A), h.store.pendingDeletes.all().map { it.ttCalId })
+    h.engine.removeAllCopies(h.target, stopSyncing = true)
+    assertTrue(h.store.pendingDeletes.all().isEmpty())
+  }
+
+  @Test
+  fun aRedeleteKeepsTheFirstDeleteTime() = runTest {
+    h.sync().assertOk()
+    val a2 = idOf(A2)
+    h.client.deactivate(CAL_A, A2)
+    h.sync().assertOk()
+    val first = h.store.pendingDeletes.all().single().deletedAt
+    h.now += 60 * 60_000L
+    h.googleRestores(a2)
+    assertEquals(1, h.sync().assertOk().counts.deleted)
+    assertEquals(first, h.store.pendingDeletes.all().single().deletedAt) // the 30 days don't restart
+  }
+
+  @Test
+  fun aRestoredCopyTheUserTookOverIsLeftAlone() = runTest {
+    h.sync().assertOk()
+    val a2 = idOf(A2)
+    val a3 = idOf(A3)
+    h.client.deactivate(CAL_A, A2)
+    h.client.deactivate(CAL_A, A3)
+    h.sync().assertOk()
+    h.googleRestores(a2)
+    h.googleRestores(a3)
+    h.userTakesOver(a2, "Mine now") // before the run: the check sees it isn't ours
+    // ... and A3 between the run's pre-read and its delete
+    h.gateway.betweenReadAndApply = { ops ->
+      if (ops.any { it is CalendarOp.Delete && it.eventId == a3 }) h.userTakesOver(a3, "Mine too")
+    }
+    val report = h.sync().assertOk()
+    h.gateway.betweenReadAndApply = null
+    assertEquals(0, report.counts.deleted)
+    assertEquals(1, report.counts.rejected)
+    assertFalse(h.gateway.rows.getValue(a2).deleted)
+    assertFalse(h.gateway.rows.getValue(a3).deleted)
+    h.sync().assertOk()
+    assertTrue(h.store.pendingDeletes.all().isEmpty()) // neither is ours any more: forgotten
+    h.assertForeignUntouched()
+  }
+
+  @Test
+  fun aDeleteThatFindsItsRowAlreadyDeletedIsWatchedToo() = runTest {
+    h.sync().assertOk()
+    val a2 = idOf(A2)
+    h.gateway.userDelete(a2) // the user deleted the copy in Google first
+    h.client.deactivate(CAL_A, A2)
+    h.sync().assertOk()
+    assertEquals(listOf(a2), h.store.pendingDeletes.all().map { it.eventId })
+    h.googleRestores(a2)
+    assertEquals(1, h.sync().assertOk().counts.deleted)
+    assertTrue(h.gateway.rows.getValue(a2).deleted)
+  }
+
+  @Test
+  fun aRestoredCopyOfAnUnreadableEventWaits() = runTest {
+    h.sync().assertOk()
+    val a2 = idOf(A2)
+    h.setFilter(CAL_A, EventFilter(excludeTerms = listOf("lunch")))
+    assertEquals(1, h.sync().assertOk().counts.deleted)
+    h.googleRestores(a2)
+    h.client.skipped = setOf(A2) // A2 changes and doesn't decode: its state is unknown
+    h.client.edit(CAL_A, A2) { it.copy(note = "x") }
+    assertEquals(0, h.sync().assertOk().counts.deleted)
+    assertFalse(h.gateway.rows.getValue(a2).deleted)
+    h.client.skipped = emptySet()
+    h.client.edit(CAL_A, A2) { it.copy(note = "y") }
+    assertEquals(1, h.sync().assertOk().counts.deleted) // readable again, still excluded
   }
 
   @Test

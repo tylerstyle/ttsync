@@ -190,6 +190,9 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
 
 - **TalkBack** on the new screens (needs a person at the phone; see run 6): the "Choose events" action of the events line, the label rows
   (colour name only when the row doesn't show it already) and the checkbox rows.
+- **D1 on the phone:** what made Google's sync put the deleted copy back is unknown (seen once, right
+  after a feed sync of the target calendar). The re-delete of 0.2.1 is checked by reproducing the
+  restore by hand (run 8).
 - **Large calendars** on a real account: a change list of more than one page (`chunk == true`)
   has never been seen, and the 6-hour FULL of a multi-page feed ran only in unit tests. The test
   calendar always fit on one page.

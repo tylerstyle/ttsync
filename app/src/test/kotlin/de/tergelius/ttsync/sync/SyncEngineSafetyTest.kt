@@ -18,8 +18,8 @@ import org.junit.Test
 
 /**
  * Random mixes of TimeTree changes, user edits in the calendar, lost mappings, crashes, provider
- * failures, races between the pre-read and the batch, lost access, filter changes and passing
- * time. After every step the rows the app did not create must be exactly as they were; at the end
+ * failures, races between the pre-read and the batch, lost access, filter changes, deleted copies
+ * that Google's sync puts back, and passing time. After every step the rows the app did not create must be exactly as they were; at the end
  * two clean FULL runs leave exactly one copy per live event that its calendar's filter includes and
  * none of the events it excludes, and the second run writes nothing.
  */
@@ -41,7 +41,7 @@ class SyncEngineSafetyTest {
     h.sync()
     repeat(18) { step ->
       val cal = if (random.nextBoolean()) CAL_A else CAL_B
-      val action = random.nextInt(17)
+      val action = random.nextInt(18)
       when (action) {
         0 -> {
           val event = h.timed("r%03d%028d".format(seed, created++), day = random.nextInt(-45, 45), title = "N")
@@ -100,6 +100,7 @@ class SyncEngineSafetyTest {
               .random(random)
           h.setFilter(selected.random(random), filter)
         }
+        17 -> h.deletedCopies().randomOrNull(random)?.let { h.googleRestores(it) } // D1
       }
       try {
         h.assertForeignUntouched()

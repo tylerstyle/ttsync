@@ -203,7 +203,11 @@ class OkHttpTimeTreeClient(
     while (true) {
       val response = send(dataRequest(url, sessionId))
       val status = response.code
-      val authFailure = status == 401 || (status == 403 && endpoint is Endpoint.Calendars)
+      // A 401 on the change list is no sign-in problem: `/calendars` accepted the session at the
+      // start of the run. It makes the list unusable, so the run reads completely instead of
+      // blocking automatic sign-ins (review 0.2.1-2, SHOULD-FIX-1).
+      val authFailure =
+        (status == 401 && endpoint !is Endpoint.Changes) || (status == 403 && endpoint is Endpoint.Calendars)
       // Only a successful response's cookie is a session; an error page's cookie is worthless.
       if (response.isSuccessful) saveRotatedSession(url, response.headers, sessionId)
       if (dump) record(endpoint, response)

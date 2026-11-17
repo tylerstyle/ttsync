@@ -262,6 +262,17 @@ class OkHttpTimeTreeClientTest {
   }
 
   @Test
+  fun c9_a401OnTheChangeListIsNoSignInProblem() = runTest {
+    // `/calendars` accepted the session at the start of the run: no login, no sign-in block.
+    server.enqueue(response(errorBody(-1), 401))
+
+    assertNull(client.changes(7, since = at(0)))
+    assertEquals(1, server.requestCount)
+    assertTrue(store.succeeded.isEmpty())
+    assertEquals(0, store.rejected)
+  }
+
+  @Test
   fun c9_otherChangeListErrorsFailAsForEvents() = runTest {
     server.enqueue(response("", 503))
 

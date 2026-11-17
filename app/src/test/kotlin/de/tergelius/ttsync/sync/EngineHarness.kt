@@ -178,6 +178,19 @@ class EngineHarness {
   }
 
   /** Adds a foreign row after setup (it joins the safety check). */
+  /** Copies the app deleted in the target (never a foreign, unmanaged or other row). */
+  fun deletedCopies(): List<Long> =
+    gateway.rows.values
+      .filter { it.calendarId == TARGET && it.deleted && it.markerUuid != null }
+      .map { it.id }
+      .filter { it !in foreign && it !in unmanagedMarked && it !in userRows }
+
+  /** What Google's sync adapter did on the phone (D1): a deleted copy is back, unchanged. */
+  fun googleRestores(id: Long) {
+    check(id in deletedCopies()) { "not a deleted copy: $id" }
+    gateway.rows[id] = gateway.rows.getValue(id).copy(deleted = false)
+  }
+
   fun addForeign(calendarId: Long, title: String, description: String?, id: Long? = null): Long {
     val rowId =
       if (id == null) gateway.addRow(calendarId, title, description)

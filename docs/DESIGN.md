@@ -408,16 +408,22 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
    `deleted = 1`; Google's sync adapter uploads the delete later, and on the phone it once restored
    such a row (`deleted = 0`, unchanged, uploaded) before uploading the delete. Without a mapping the
    app never looked at it again. So every delete of the diff, of a leftover and of this step is
-   recorded in `pending_delete`, and every run first checks those rows by `_ID`, before any write:
+   recorded in `pending_delete`, also when the row turns out to be deleted already (by the user in
+   Google, or before a crash). Every run first checks those rows by `_ID`, before any write:
    - gone (purged), in another calendar or no longer ours: forgotten, never touched;
    - still `deleted = 1`: kept;
-   - back and ours: deleted again with a verified delete, unless its uuid is `Write` in an active
-     calendar or a mapping points at it (then it is forgotten, and the diff or the scan adopts it).
+   - back and ours: deleted again with a verified delete. Exceptions: if its uuid is `Write` in an
+     active calendar or a mapping points at it, it is forgotten (the scan adopts it, or removes it as
+     a duplicate when the event already has another copy); if its event couldn't be read this run,
+     it waits.
 
    Only entries of the current target and of active calendars are checked; a paused calendar's rows
-   stay untouched. Entries older than 30 days, or of another target, are forgotten. Duplicates are not
-   recorded: the scan finds an extra row of a live uuid again by itself. The removal actions (Remove all
-   copies, deselect, target change) are not watched.
+   stay untouched. An entry is forgotten 30 days after the first delete (a re-delete doesn't renew
+   it), or when the target changes. A re-delete repeats an earlier in-window delete and doesn't check
+   the window again. Duplicates are not recorded: the scan finds an extra row of a live uuid by
+   itself. The removal actions (Remove all copies, deselect, target change, sign-out) are not watched:
+   a copy Google puts back after them stays until it is deleted in Google by hand (it doesn't come
+   back then) or with "Remove all copies".
 6. **Adoption scan** (in FULL, after a crash, or with an empty mapping table). It runs after mapping
    and before the diff's writes, and it builds the marker index the diff uses. This step only adopts.
    Query `calendar_id=target AND deleted=0 AND description LIKE '%[ttsync:%'` and parse the last line.
@@ -637,8 +643,16 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
   with the next run; an event edited during a FULL read is not deleted.
 - 0.2.1: a small calendar runs INCREMENTAL too, and a deletion arrives with the next run; a FULL at
   least every 6 h catches what the change list misses; the feed size is recorded by FULL runs only; a
-  change list that can't be trusted falls back to a FULL read (C9 in the client tests: forward paging,
-  tombstones, an empty answer, and the four ways the list is not trusted).
+  change list that can't be trusted falls back to a FULL read, also on 401/403/404 or an unreadable
+  page (C9 in the client tests: forward paging, tombstones, an empty answer, the ways the list is not
+  trusted, no sign-in on a 401), and a real loss of access still pauses through the FULL read; a
+  deleted moved date goes with the next run, and its tombstone goes with its series.
+- 0.2.1, step 6a (D1): a copy Google's sync restores is deleted again until its row is gone; one
+  that is wanted again is adopted; a paused calendar's or an unreadable event's restored copy is left
+  alone; a copy the user took over (before the run, or between the pre-read and the delete) is never
+  touched; a delete that finds the row already deleted is watched too; the watch keeps its first
+  date, expires after 30 days and goes with removals, deselect and stop syncing. The random safety
+  test also restores deleted copies.
 - E13: a mapping with an old `end_at` that is missing from the full fetch stays untouched.
 - E14: marked rows with unknown or out-of-window uuids stay untouched, even in a FULL run on an empty
   mapping table.
@@ -865,3 +879,13 @@ From the code reviews ([reviews/0.2.1-agy.md](reviews/0.2.1-agy.md), [reviews/0.
 | Tombstones of deleted moved dates stay in `snapshot` for good | Fixed for deleted series: a complete read drops a stored tombstone whose series is gone. While the series lives, its tombstones stay, since the override rules may need them to keep that date out of the series copy (one small row per deleted moved date). | 5 (step 3) |
 | Stale small-calendar text in sections 1, 3, 7, 9, comments and DEVICE-TESTS; "repairs copies changed in Google" | Fixed. | — |
 | No test for a deleted moved date through the change list | Added. | 10 |
+
+From the second review ([reviews/0.2.1-review-2.md](reviews/0.2.1-review-2.md)) of the fix round and D1:
+
+| Finding | Outcome | Where |
+|---|---|---|
+| A 401 from the change list blocked automatic sign-ins | Fixed: a 401 there is no sign-in problem (`/calendars` accepted the session); the list counts as unusable. | 3, C9 |
+| A re-delete renewed the 30-day watch | Fixed: it keeps the first date. | 5 (6a) |
+| Removal actions aren't watched; a delete that finds its row already deleted wasn't either | The latter is watched now; the former is documented (delete by hand or "Remove all copies"). | 5 (6a) |
+| 6a ignored unreadable events and the window | Unreadable: it waits. The window: documented, a re-delete repeats an earlier in-window delete. | 5 (6a) |
+| Tests and docs | Added: the cases above, restores in the random safety test, section 10, the engine's safety contract. | 10 |

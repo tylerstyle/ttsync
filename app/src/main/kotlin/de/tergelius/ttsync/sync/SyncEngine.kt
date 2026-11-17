@@ -60,7 +60,9 @@ import kotlinx.serialization.builtins.ListSerializer
  *   target calendar that carry the marker of the expected uuid are ever updated or deleted. During
  *   a sync, the diff (step 5) deletes only in-window mappings of active calendars. The adoption
  *   scan only adopts, removes duplicates of live, active uuids, and removes unmapped leftovers of
- *   live, in-window events that their active calendar's filter excludes.
+ *   live, in-window events that their active calendar's filter excludes. Step 6a deletes again only
+ *   rows that an earlier sync deleted and Google's sync put back, still with their marker in the
+ *   target, for active calendars and uuids no calendar wants.
  * - **Idempotent.** A run after an unchanged TimeTree writes nothing.
  * - **Cursor.** A calendar's cursor (its high-water mark, see [SyncCursor.highWater]) advances only
  *   after all its writes succeeded and their mappings are committed. It is computed from the
@@ -554,6 +556,9 @@ class DefaultSyncEngine(
     /** `_ID`s already adopted or being deleted as duplicates in this run. */
     private val claimed = HashSet<Long>()
 
+    /** Step 6a: the first `deleted_at` of each row deleted again, so the watch doesn't renew. */
+    private val redeleteSince = HashMap<Long, Long>()
+
     /** Uuids that are [Desired.Write] in an active calendar: the only ones the scan may adopt. */
     private val activeWrites = HashMap<String, CalendarWork>()
 
@@ -918,16 +923,20 @@ class DefaultSyncEngine(
         val checks = calendarCall { gateway.checkRows(target, due.associate { it.eventId to it.uuid }) }
         val mapped = mappings.values.mapTo(HashSet()) { it.eventId }
         for (entry in due) {
+          val work = byId.getValue(entry.ttCalId)
           when (checks[entry.eventId] ?: RowCheck.MISSING) {
             RowCheck.DELETED -> Unit
             RowCheck.OURS ->
-              if (entry.uuid in activeWrites || entry.eventId in mapped) {
-                forget += entry.eventId
-              } else {
-                log.w("copy of ${TtLog.short(entry.uuid)} is back after its delete; deleting it again")
-                byId.getValue(entry.ttCalId).returned +=
-                  Planned(CalendarOp.Delete(entry.eventId, entry.uuid), Kind.REDELETE)
-                claimed += entry.eventId
+              when {
+                entry.uuid in activeWrites || entry.eventId in mapped -> forget += entry.eventId
+                // Unreadable this run: its state is unknown, so wait (review 0.2.1-2, NIT-3).
+                entry.uuid in work.skippedUuids -> Unit
+                else -> {
+                  log.w("copy of ${TtLog.short(entry.uuid)} is back after its delete; deleting it again")
+                  work.returned += Planned(CalendarOp.Delete(entry.eventId, entry.uuid), Kind.REDELETE)
+                  claimed += entry.eventId
+                  redeleteSince[entry.eventId] = entry.deletedAt
+                }
               }
             else -> forget += entry.eventId
           }
@@ -1096,6 +1105,10 @@ class DefaultSyncEngine(
       fun forget(p: Planned) {
         if (mappings[p.uuid]?.eventId == p.eventId) removed += p.uuid
       }
+      fun watch(p: Planned) {
+        val eventId = p.eventId!!
+        deleted += PendingDelete(eventId, p.uuid, work.id, target.calendarId, redeleteSince[eventId] ?: nowMillis())
+      }
       fun remember(p: Planned, eventId: Long) {
         upserts +=
           Mapping(p.uuid, work.id, target.calendarId, eventId, p.hash!!, p.write!!.endAt, nowMillis())
@@ -1115,9 +1128,7 @@ class DefaultSyncEngine(
             if (p.kind == Kind.DELETE) forget(p)
             // Watched until the row is gone (step 6a); a duplicate needs no watch, since the scan
             // finds an extra row of a live uuid again.
-            if (p.kind != Kind.DUPLICATE) {
-              deleted += PendingDelete(p.eventId!!, p.uuid, work.id, target.calendarId, nowMillis())
-            }
+            if (p.kind != Kind.DUPLICATE) watch(p)
             work.counter.deleted++
           }
           is OpResult.Rejected -> {
@@ -1131,11 +1142,17 @@ class DefaultSyncEngine(
               }
               Kind.DELETE -> {
                 if (!result.check.isGone()) work.counter.rejected++
+                // Already deleted (by the user in Google, or before a crash): Google's sync may
+                // still put it back, so it is watched too (review 0.2.1-2, NIT-2).
+                if (result.check == RowCheck.DELETED) watch(p)
                 forget(p)
               }
-              Kind.DUPLICATE,
               Kind.LEFTOVER,
-              Kind.REDELETE -> if (!result.check.isGone()) work.counter.rejected++
+              Kind.REDELETE -> {
+                if (!result.check.isGone()) work.counter.rejected++
+                if (result.check == RowCheck.DELETED) watch(p)
+              }
+              Kind.DUPLICATE -> if (!result.check.isGone()) work.counter.rejected++
               Kind.INSERT -> error("an insert cannot be refused")
             }
           }
