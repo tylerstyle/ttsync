@@ -124,7 +124,18 @@ class OkHttpTimeTreeClient(
       ChangeFeed(calendarId, maxPages, log) { from ->
         dataCall(Endpoint.Changes(calendarId, from), budget, dump = true, ::decodeEventsPage)
       }
-    return feed.read(since)
+    // The change list was probed on one account only. If TimeTree restricts or changes it while
+    // `/events/sync` still works, read completely instead of pausing the calendar or failing the
+    // run; a real loss of access gets the same 403/404 from the complete read (review 0.2.1).
+    return try {
+      feed.read(since)
+    } catch (e: TtError.AccessLost) {
+      log.w("timetree: calendar $calendarId: change list -> HTTP ${e.httpStatus}; reading completely")
+      null
+    } catch (e: TtError.ApiChanged) {
+      log.w("timetree: calendar $calendarId: change list unreadable; reading completely")
+      null
+    }
   }
 
   private fun decodeEventsPage(body: String): TtEventsPage =

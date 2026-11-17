@@ -116,9 +116,10 @@ data class TtLabel(
 }
 
 /**
- * One page of `GET /calendar/{id}/events/sync[?since=N]`, newest change first. [since] asks for the
- * next older page and [chunk] is false on the oldest one (see [EventFeed]). The events stay raw
- * [JsonObject]s so that each one can be stored verbatim as a snapshot; decode them with
+ * One page of either event list. `/events/sync` ([EventFeed]): newest change first; [since] asks
+ * for the next older page and [chunk] is false on the oldest one. `/events` ([ChangeFeed]): oldest
+ * change first; [since] is the newest `updated_at` + 1 and asks for the next newer page. The events
+ * stay raw [JsonObject]s so that each one can be stored verbatim as a snapshot; decode them with
  * [TtEvent.fromJson].
  */
 @Serializable

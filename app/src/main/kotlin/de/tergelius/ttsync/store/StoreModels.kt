@@ -63,8 +63,8 @@ data class SyncCursor(
   val ttCalId: Long,
   /**
    * The high-water mark: the newest change (`TtEvent.changedAt`, the later of `updated_at` and
-   * `deactivated_at`, TimeTree's clock) among the events fetched so far, or 0 if the last FULL
-   * found none. An INCREMENTAL run reads the changes from this minus `TimeTreeApi.FEED_OVERLAP` on
+   * `deactivated_at`, TimeTree's clock) of the last FULL read (0 if it found no event), raised by
+   * every INCREMENTAL read. An INCREMENTAL run reads the changes from this minus `TimeTreeApi.FEED_OVERLAP` on
    * (`TimeTreeClient.changes`). Null before the first FULL, or after
    * the upgrade from schema 1, whose `since` was the server's backwards paging cursor: forces FULL.
    * The server's `since` is never stored.

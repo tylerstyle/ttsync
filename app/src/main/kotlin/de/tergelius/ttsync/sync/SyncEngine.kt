@@ -748,7 +748,9 @@ class DefaultSyncEngine(
         val changes =
           if (fullReason != null) null
           else {
-            val since = checkNotNull(cursor.highWater) - TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds
+            // Not below 0: an empty calendar's mark is 0, and a negative since was never probed.
+            val since =
+              (checkNotNull(cursor.highWater) - TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds).coerceAtLeast(0)
             timeTree { client.changes(work.id, since) }.also { if (it == null) fullReason = "change list unusable" }
           }
         val full = fullReason != null
@@ -799,7 +801,8 @@ class DefaultSyncEngine(
      * Why this calendar's run must be FULL, or null for INCREMENTAL (DESIGN.md section 5).
      * INCREMENTAL reads the list of changes, which also holds deleted events. A FULL at least every
      * [FULL_INTERVAL_MILLIS] is the safety net: it notices whatever that list no longer shows (a
-     * tombstone TimeTree dropped while the phone was off, say) and repairs copies changed in Google.
+     * tombstone TimeTree dropped while the phone was off, say) and brings back copies that were
+     * deleted in Google (it checks that each copy still exists and is ours).
      * A changed filter needs a FULL too: copies of events it now excludes must go, and events it now
      * includes must be copied, whether they changed or not.
      */

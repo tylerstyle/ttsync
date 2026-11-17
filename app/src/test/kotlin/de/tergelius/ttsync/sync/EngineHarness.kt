@@ -346,7 +346,14 @@ class EngineHarness {
     }
 
     override suspend fun changes(calendarId: Long, since: Long): EventsResult? {
-      record("changes:$calendarId:$since")
+      // Like the real client: a 403/404 or an unreadable answer means "read completely".
+      try {
+        record("changes:$calendarId:$since")
+      } catch (e: TtError.AccessLost) {
+        return null
+      } catch (e: TtError.ApiChanged) {
+        return null
+      }
       var page = 0
       val feed =
         ChangeFeed(calendarId, TimeTreeApi.MAX_PAGES, TtLog.None) { from ->

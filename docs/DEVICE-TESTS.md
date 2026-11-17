@@ -163,8 +163,9 @@ early periodic run is refused by WorkManager (F7), so only natural periodic runs
 
 - **TalkBack** on the new screens (needs a person at the phone; see run 6): the "Choose events" action of the events line, the label rows
   (colour name only when the row doesn't show it already) and the checkbox rows.
-- **Feeds of more than 3 pages** (about 300 events) on a real calendar: the high-water INCREMENTAL
-  path and the 6-hour FULL ran only in unit tests. The test calendar always fit on one page.
+- **Large calendars** on a real account: a change list of more than one page (`chunk == true`)
+  has never been seen, and the 6-hour FULL of a multi-page feed ran only in unit tests. The test
+  calendar always fit on one page.
 - **A failure notification while notifications are denied**: run 3 checked the warning on Status
   and in the checklist, but no failure was due, so no notification was missed.
 - **Other vendors and Android versions**: only LineageOS 24 on one phone; no vendor battery

@@ -31,8 +31,9 @@ object TimeTreeApi {
   const val MAX_PAGES = 500
 
   /**
-   * How far below a known `updated_at` an events read goes before it stops ([EventFeed]): changes
-   * that commit with a slightly older timestamp, or share one, are read again rather than missed.
+   * How far below a known `updated_at` a read starts again: the second pass of a FULL read
+   * ([EventFeed]) and the `since` of an INCREMENTAL one ([ChangeFeed]). Changes that commit with a
+   * slightly older timestamp, or share one, are read again rather than missed.
    * Re-reading a few known events is harmless; the engine's hash diff writes nothing for them.
    */
   val FEED_OVERLAP = 2.minutes

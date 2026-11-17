@@ -89,16 +89,16 @@ interface TimeTreeClient {
    * [ChangeFeed]). The engine passes its high-water mark minus [TimeTreeApi.FEED_OVERLAP], so a few
    * known events come again. The result is never complete: absence from it means nothing.
    *
-   * Returns null if the list doesn't behave as observed (out of order, a `since` that doesn't move
-   * forward, too many pages); the engine then reads the calendar completely with [events]. Errors,
-   * duplicates and undecodable events are handled as in [events].
-   *
-   * @throws TtError.AccessLost on 403/404 for this calendar
+   * Returns null if the list can't be used: it doesn't behave as observed (out of order, a `since`
+   * that doesn't move forward, too many pages), answers 403/404, or sends a page that doesn't parse.
+   * The engine then reads the calendar completely with [events], which decides about lost access.
+   * Other errors (offline, rate limit, sign-in), duplicates and undecodable events are handled as in
+   * [events].
    */
   suspend fun changes(calendarId: Long, since: Long): EventsResult?
 }
 
-/** The complete result of one [TimeTreeClient.events] call. */
+/** The result of one [TimeTreeClient.events] or [TimeTreeClient.changes] call. */
 data class EventsResult(
   /** Live events and tombstones, deduplicated by uuid. */
   val events: List<FetchedEvent>,
@@ -110,8 +110,8 @@ data class EventsResult(
   /** Number of pages fetched, for the report (a FULL's second pass included). */
   val pages: Int,
   /**
-   * Pages of the first pass alone; for a FULL, the size of the whole feed. The engine keeps it to
-   * choose between FULL and INCREMENTAL runs ([de.tergelius.ttsync.store.SyncCursor.lastFullPages]).
+   * Pages of the first pass alone; for a FULL, the size of the whole feed. The engine records it
+   * for the log ([de.tergelius.ttsync.store.SyncCursor.lastFullPages]).
    */
   val feedPages: Int = pages,
   /**

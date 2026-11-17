@@ -173,6 +173,27 @@ class SyncEngineTest {
   }
 
   @Test
+  fun aRefusedChangeListReadsCompletelyAndOnlyThatReadPauses() = runTest {
+    h.sync().assertOk()
+    h.client.fail = { if (it.startsWith("changes:")) TtError.AccessLost(CAL_A, 404) else null }
+    h.client.deactivate(CAL_A, A1)
+
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.FULL, report.calendars.single().mode)
+    assertEquals(CalendarState.ACTIVE, report.calendars.single().state)
+    assertEquals(1, report.counts.deleted) // missing from the complete live feed
+    assertTrue(h.log.lines.any { it == "I calendar 1: FULL (change list unusable)" })
+
+    // Access really lost: the complete read gets the same answer and pauses; the copies stay.
+    val copies = h.copies().keys
+    h.client.fail = { if (it.startsWith("changes:") || it.startsWith("events:")) TtError.AccessLost(CAL_A, 404) else null }
+    val lost = h.sync()
+    assertEquals(CalendarState.PAUSED, lost.calendars.single().state)
+    assertEquals(copies, h.copies().keys)
+    h.assertForeignUntouched()
+  }
+
+  @Test
   fun aChangeListThatCannotBeTrustedFallsBackToAFullRead() = runTest {
     h.sync().assertOk()
     h.client.changesOutOfOrder = true
@@ -247,6 +268,7 @@ class SyncEngineTest {
     assertEquals(1, h.store.cursors.get(CAL_A)!!.lastFullPages)
     h.client.put(CAL_A, h.timed(A1, day = 0, title = "Breakfast"))
     assertEquals(1, h.sync().assertOk().counts.added)
+    assertTrue("changes:1:0" in h.client.requests) // mark 0 minus the overlap, but never below 0
   }
 
   // When a run is FULL ----------------------------------------------------------------------------
@@ -939,6 +961,16 @@ class SyncEngineTest {
     val updated = h.copies().getValue(SERIES)
     assertEquals(series.id, updated.id)
     assertNotNull(updated.values[EventSpec.COL_EXDATE])
+
+    // The moved date deleted in TimeTree: its tombstone comes through the change list.
+    h.client.deactivate(CAL_A, moved)
+    val deleted = h.sync().assertOk()
+    assertEquals(SyncMode.INCREMENTAL, deleted.calendars.single().mode)
+    assertEquals(1, deleted.counts.deleted)
+    assertFalse(moved in h.copies())
+    assertEquals(series.id, h.copies().getValue(SERIES).id)
+    assertEquals(true, h.store.snapshots.get(moved)?.deactivated) // kept for the override rules
+    h.assertForeignUntouched()
   }
 
   @Test

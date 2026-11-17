@@ -28,8 +28,8 @@ v1 does:
 - Handle timed, all-day, multi-day and recurring events, edited occurrences and deletions. Skip
   birthdays (`type 1`) and memos (`category 2`).
 - Copy only events that end on or after today − 30 days. Older events are never written or touched.
-- Sync every hour. Reconcile fully on every run for a small calendar, otherwise at least every 6 h
-  (section 5). "Sync now" runs at any time.
+- Sync every hour: read the changes (new, edited and deleted events) on every run, and reconcile
+  fully at least every 6 h (section 5). "Sync now" runs at any time.
 - Show a status screen, a failure notification and a reliability checklist. Sign-out can remove the copies.
 - English (default) and German.
 - Since 0.2.0: per selected calendar, an optional filter that copies only some of its events, by
@@ -132,20 +132,23 @@ All requests go to `https://timetreeapp.com/api/v1` with the headers `X-Timetree
 
   INCREMENTAL asks for `since` = the calendar's high-water mark − 2 min and follows the returned
   `since` while `chunk == true`. The high-water mark is the largest `max(updated_at, deactivated_at)`
-  fetched so far (0 after a FULL of an empty calendar); the server's `since` is never stored.
+  of the last FULL read (0 if it found no event), raised by every INCREMENTAL read; the server's
+  `since` is never stored. `since` never goes below 0.
   Re-reading a few known events is harmless: the hash diff writes nothing for them. The read is
   trusted only while the list behaves as observed. An entry older than its page's `since`, an entry
   out of order, `chunk == true` with a `since` that doesn't move forward, or more than 500 pages
-  makes the run read that calendar FULL instead ("change list unusable").
+  makes the run read that calendar FULL instead ("change list unusable"). So does a 403/404 or an
+  unreadable page from the change list: the list was probed on one account only, and the FULL read
+  decides whether access is really lost (it pauses the calendar on the same 403/404).
 - **Both reads.** A uuid seen twice keeps its newest version. A FULL read fails with `ApiChanged` if a
   cursor repeats or after 500 pages. Never return partial lists.
 - **Re-login.** Only after a 401 on a data call or a 403 on `/calendars`. At most one login and one
   retry per run.
 - **Pacing.** At least 1 s between requests. "Sync now" within 60 s of a successful run starts no run
   (Status says "Synced N s ago") instead of a delayed one, which can wait half an hour while the app
-  is in the background (device test F4). An hourly run is 1 request plus, per calendar, the labels and
-  its pages when it is small (a FULL, section 5), or 1 page when it is larger (more only after many
-  changes). Timeouts: connect 15 s, read 30 s, call 60 s.
+  is in the background (device test F4). An hourly run is 1 request plus, per calendar, usually 1
+  request for its changes (more only after many changes); a FULL (section 5) adds the labels and every
+  page of the live feed. Timeouts: connect 15 s, read 30 s, call 60 s.
 
 | Signal | Error | Reaction |
 |---|---|---|
@@ -344,7 +347,8 @@ the next run, "Sync now" included. That is usually one request per calendar.
 
 The 6-hourly FULL is the safety net. It notices what the change list no longer shows: a tombstone
 TimeTree dropped while the phone was off for days (a run after a long pause is always FULL), or an
-event that vanished without one. It also repairs copies changed or deleted in Google.
+event that vanished without one. It also brings back copies deleted in Google: it checks that each
+copy still exists and is ours. (Content edited in Google stays until the event changes in TimeTree.)
 
 Until 0.2.0, INCREMENTAL read the top of `/events/sync`, which leaves deletions out. So a feed of at
 most 3 pages (`SMALL_FEED_PAGES`) ran FULL on every run, and in a larger one a deletion took up to
@@ -526,9 +530,8 @@ Status.
    - standby bucket (diagnosis only).
 7. **Settings**: interval 1 h (default), 3 h or 6 h, never shorter, as owners were promised; Sources
    (the list marks filtered calendars);
-   Target; Full resync; Remove all copies; Sign out. The adaptive FULL (section 5) keeps that promise:
-   it never adds runs, and a run that reads a small calendar completely costs a few requests, the
-   same order as an incremental one.
+   Target; Full resync; Remove all copies; Sign out. The 6-hourly FULL (section 5) keeps that
+   promise: it never adds runs.
 8. **About/privacy.** Data flow, no server or analytics, password storage, unofficial-API disclaimer,
    version, certificate SHA-256, source, license.
 
@@ -549,16 +552,16 @@ Settings → App languages.
 - **From WorkManager.** Network-state, wake-lock, boot and FGS permissions, and rescheduling after a
   reboot. No boot receiver of our own.
 - **Exported components.** Only the launcher. The debug manifest adds `debug.DebugReceiver`, guarded by
-  `android.permission.DUMP` so only adb shell can reach it. Its actions are `SYNC_NOW`, `FULL_SYNC` and
-  `DROP_MAPPINGS`.
+  `android.permission.DUMP` so only adb shell can reach it. Its actions are `SYNC_NOW`, `FULL_SYNC`,
+  `DROP_MAPPINGS` and `PROBE_EVENTS` (0.2.1: reads either event list raw, see DEVELOPMENT.md).
 - **Notification channels.** `sync_problems` and `sync_running`.
 
 ## 9. Background
 
 - **Periodic work** (`ttsync-periodic`). Runs at the set interval with 15 min flex, needs
   `NetworkType.CONNECTED`, and backs off exponentially from 15 min. Enqueued with `UPDATE` when settings
-  change and `KEEP` at app start. Each run is FULL or INCREMENTAL per calendar (section 5): a small
-  calendar is read completely every time, a larger one at least every 6 h.
+  change and `KEEP` at app start. Each run is FULL or INCREMENTAL per calendar (section 5): it reads
+  the changes, and the whole calendar at least every 6 h.
 - **Sync now** (`ttsync-now`). Expedited, falling back to a normal request, never delayed (section 3,
   Pacing). While a run is going on, the first request becomes its one follow-up and later ones merge
   into it (FULL wins). `getForegroundInfo()` shows `sync_running`.
@@ -832,4 +835,14 @@ calendar of more than 3 pages. The owner approved the change on 2026-11-17.
 | Small calendars | No more FULL on every run: every calendar runs INCREMENTAL between the 6-hourly FULLs, which lowers the load. | 5 |
 | Distrust | A change list that doesn't behave as observed makes that calendar's run FULL; nothing is guessed. | 3 |
 | Upgrade | Reuses the stored high-water mark: no schema change, no extra FULL. | 3, 5 |
-| Debug probe | `DebugReceiver` `PROBE_EVENTS` reads either list raw; kept for future questions about the API. | DEVELOPMENT.md |
+| Debug probe | `DebugReceiver` `PROBE_EVENTS` reads either list raw; kept for future questions about the API. | 8, DEVELOPMENT.md |
+
+From the code reviews ([reviews/0.2.1-agy.md](reviews/0.2.1-agy.md), [reviews/0.2.1-review.md](reviews/0.2.1-review.md)):
+
+| Finding | Outcome | Where |
+|---|---|---|
+| A 403/404 or an unreadable page from the change list paused the calendar or failed the run | Fixed: the client treats it like an untrustworthy list, and the FULL read decides about lost access. | 3, C9, engine tests |
+| An empty calendar asked for a negative `since` | Fixed: `since` is at least 0. | 3 |
+| Tombstones of deleted moved dates stay in `snapshot` for good | Accepted: one small row each, harmless. They now arrive through the change list; 0.2.0 never stored any. | 2 |
+| Stale small-calendar text in sections 1, 3, 7, 9, comments and DEVICE-TESTS; "repairs copies changed in Google" | Fixed. | — |
+| No test for a deleted moved date through the change list | Added. | 10 |

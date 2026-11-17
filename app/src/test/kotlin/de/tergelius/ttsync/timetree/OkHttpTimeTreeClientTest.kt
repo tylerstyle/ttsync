@@ -251,11 +251,21 @@ class OkHttpTimeTreeClientTest {
   }
 
   @Test
-  fun c9_changesFailLikeEvents() = runTest {
+  fun c9_aRefusedOrUnreadableChangeListIsNotTrusted() = runTest {
+    // Not AccessLost or ApiChanged: the engine then reads completely, and that read decides.
     server.enqueue(response(errorBody(-1), 404))
+    assertNull(client.changes(7, since = at(0)))
+    server.enqueue(response("<html>maintenance</html>"))
+    assertNull(client.changes(7, since = at(0)))
 
-    val error = expectError<TtError.AccessLost>(thrown) { client.changes(7, since = at(0)) }
-    assertEquals(7L, error.calendarId)
+    assertEquals(2, log.lines.count { it.endsWith("reading completely") })
+  }
+
+  @Test
+  fun c9_otherChangeListErrorsFailAsForEvents() = runTest {
+    server.enqueue(response("", 503))
+
+    expectError<TtError.Transient>(thrown) { client.changes(7, since = at(0)) }
   }
 
   // Debug probe (DebugReceiver PROBE_EVENTS) ---------------------------------------------------
