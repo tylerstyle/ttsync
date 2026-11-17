@@ -3,7 +3,7 @@
 Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
 [DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
 
-Runs 1–6 on 2026-11-12 and runs 7–8 on 2026-11-17, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
+Runs 1–6 on 2026-11-12 and runs 7–9 on 2026-11-17, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
 driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
@@ -11,7 +11,7 @@ timed events, "TT test weekly" (weekly series with one deleted and one moved occ
 Google calendar, which already held 7 events of its own.
 
 **Safety invariant held in every run:** the target's 7 own events were hashed before the run and
-compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 each in runs 5, 6 and 7, 6 in run 8): never
+compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 each in runs 5, 6 and 7, 6 in run 8, 4 in run 9): never
 changed. After each run the target held
 only those 7 events again.
 
@@ -181,6 +181,23 @@ sync had left in run 7.
 | Calendar sync on: Google uploads the delete and purges the row; the next run forgets the entry and writes nothing | Pass |
 | Regression: "Probe D" deleted normally, purged, the entry forgotten one run later | Pass |
 | Remove all copies, uninstall; every sync setting of the account as at the start | Pass |
+
+## Run 9: update 0.2.0 → 0.2.1 through Obtainium, release build
+
+The published 0.2.0 APK was installed with adb and tracked by Obtainium, set up with all events
+copied, then updated through Obtainium to the published 0.2.1.
+
+| Area | Result |
+|---|---|
+| Release asset: SHA-256 matches the `.sha256` file and the release notes, release certificate, versionCode 201 | Pass |
+| Update offered ("0.2.0 → v0.2.1") and installed in place: "Update this app?", Play Protect "App scan recommended" → "Scan app" → "This app looks safe" → "Install" | Pass |
+| Installed APK byte-identical to the asset, `firstInstallTime` unchanged, installer Obtainium; sign-in, settings, permissions, battery exemption and the WorkManager job kept | Pass |
+| First "Sync now" after the update: Added 0 · Updated 0 · Deleted 0, every copy byte-identical (`_id`, `_sync_id`) | Pass |
+| A new event "Probe E": Added 1; deleted in TimeTree: Deleted 1 with the next "Sync now", purged by Google | Pass |
+| SyncDb schema 3 → 4 | Not checked: a release build can't be read with `run-as` |
+
+Google's sync added the target calendar's default reminder to the copies (`hasAlarm`), as in run 6;
+the app doesn't manage reminders (DESIGN.md section 4).
 
 ## Bugs and fixes
 
