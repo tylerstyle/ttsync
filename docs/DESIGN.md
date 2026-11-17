@@ -596,6 +596,11 @@ Settings → App languages.
     killer stops the jobs, no code runs and no notification appears.
   - *Mitigation:* the "Keep running" setup step, Xiaomi Autostart, and the red "last success" on Status.
     The README explains this.
+- **Access-lost notification.** "No access to a TimeTree calendar" appears once per calendar that a
+  run pauses. The calendars already notified are stored (`SyncStatus.accessLostNotified`); one leaves
+  that set only when a report shows it active again or it is deselected. A run that fails early, or
+  lists only some calendars, changes nothing for the others (0.2.2, issue #1: before, a run that
+  failed between two runs that both found the calendar paused made the notification come again).
 - **First sync.** Confirming the target, or changing sources or target, enqueues `ttsync-now` as FULL.
   The user doesn't wait an hour.
 

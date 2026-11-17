@@ -35,6 +35,9 @@ interface StatusRepository {
   /** Whether the single failure notification is currently shown. */
   suspend fun setFailureNotified(notified: Boolean)
 
+  /** The calendars whose loss of access was notified ([SyncStatus.accessLostNotified]). */
+  suspend fun setAccessLostNotified(ttCalIds: Set<Long>)
+
   /** Sign-out. */
   suspend fun clear()
 }
@@ -48,6 +51,11 @@ data class SyncStatus(
   val autoLoginBlockedUntil: Long? = null,
   val rateLimitedUntil: Long? = null,
   val failureNotified: Boolean = false,
+  /**
+   * The paused calendars whose "No access" notification was shown (issue #1,
+   * [de.tergelius.ttsync.sync.AccessLostNotices]); null if never stored (before 0.2.2).
+   */
+  val accessLostNotified: Set<Long>? = null,
 ) {
   /** After the second rejection in a row, automatic logins stop until the user signs in. */
   val autoLoginStopped: Boolean

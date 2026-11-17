@@ -545,6 +545,8 @@ class EngineHarness {
 
     override suspend fun setFailureNotified(notified: Boolean) = Unit
 
+    override suspend fun setAccessLostNotified(ttCalIds: Set<Long>) = Unit
+
     override suspend fun clear() {
       value = SyncStatus()
     }

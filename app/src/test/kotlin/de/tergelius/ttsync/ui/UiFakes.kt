@@ -131,6 +131,10 @@ class FakeStatus(private val calls: Calls, initial: SyncStatus = SyncStatus()) :
     flow.update { it.copy(failureNotified = notified) }
   }
 
+  override suspend fun setAccessLostNotified(ttCalIds: Set<Long>) {
+    flow.update { it.copy(accessLostNotified = ttCalIds) }
+  }
+
   override suspend fun clear() {
     calls.add("status.clear")
     flow.value = SyncStatus()

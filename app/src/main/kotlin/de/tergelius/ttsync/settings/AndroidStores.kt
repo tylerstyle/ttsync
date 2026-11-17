@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import de.tergelius.ttsync.calendar.TargetCalendar
 import de.tergelius.ttsync.sync.SyncReport
@@ -159,6 +160,10 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
     store.edit { it[FAILURE_NOTIFIED] = notified }
   }
 
+  override suspend fun setAccessLostNotified(ttCalIds: Set<Long>) {
+    store.edit { it[ACCESS_LOST_NOTIFIED] = ttCalIds.mapTo(HashSet()) { id -> id.toString() } }
+  }
+
   override suspend fun clear() {
     store.edit { it.clear() }
   }
@@ -172,6 +177,7 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
       autoLoginBlockedUntil = prefs[AUTO_LOGIN_BLOCKED_UNTIL],
       rateLimitedUntil = prefs[RATE_LIMITED_UNTIL],
       failureNotified = prefs[FAILURE_NOTIFIED] ?: false,
+      accessLostNotified = prefs[ACCESS_LOST_NOTIFIED]?.mapNotNullTo(HashSet()) { it.toLongOrNull() },
     )
 
   private companion object {
@@ -182,5 +188,6 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
     val AUTO_LOGIN_BLOCKED_UNTIL = longPreferencesKey("auto_login_blocked_until")
     val RATE_LIMITED_UNTIL = longPreferencesKey("rate_limited_until")
     val FAILURE_NOTIFIED = booleanPreferencesKey("failure_notified")
+    val ACCESS_LOST_NOTIFIED = stringSetPreferencesKey("access_lost_notified")
   }
 }

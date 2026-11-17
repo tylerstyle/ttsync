@@ -112,23 +112,20 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
       }
 
-      val pausedNow = report.calendars.filter { it.state == CalendarState.PAUSED }.map { it.ttCalId }
-      if (pausedNow.isNotEmpty()) {
-        val pausedBefore =
-          before.lastReport?.calendars.orEmpty()
-            .filter { it.state == CalendarState.PAUSED }
-            .map { it.ttCalId }
-            .toSet()
-        val newlyPaused = pausedNow.filter { it !in pausedBefore }
-        if (newlyPaused.isNotEmpty()) {
-          val names = graph.settingsRepository.current().sources.associate { it.id to it.name }
-          newlyPaused.forEach { notifier.showAccessLost(it, names[it]) }
-          log.i("worker: access-lost notification for ${newlyPaused.size} calendar(s)")
-        }
-        if (report.calendars.all { it.state == CalendarState.PAUSED }) {
-          graph.syncScheduler.cancelPeriodic()
-          log.i("worker: every calendar is paused; periodic work cancelled")
-        }
+      // Once per loss of access, even across runs that fail early (issue #1).
+      val sources = graph.settingsRepository.current().sources
+      val notices =
+        AccessLostNotices.decide(report, before.accessLostNotified, before.lastReport, sources.mapTo(HashSet()) { it.id })
+      if (notices.notify.isNotEmpty()) {
+        val names = sources.associate { it.id to it.name }
+        notices.notify.forEach { notifier.showAccessLost(it, names[it]) }
+        log.i("worker: access-lost notification for ${notices.notify.size} calendar(s)")
+      }
+      if (notices.notified != before.accessLostNotified) status.setAccessLostNotified(notices.notified)
+      val pausedNow = report.calendars.filter { it.state == CalendarState.PAUSED }
+      if (pausedNow.isNotEmpty() && report.calendars.all { it.state == CalendarState.PAUSED }) {
+        graph.syncScheduler.cancelPeriodic()
+        log.i("worker: every calendar is paused; periodic work cancelled")
       }
     } catch (e: CancellationException) {
       throw e
