@@ -65,14 +65,10 @@ interface TimeTreeClient {
   suspend fun labels(calendarId: Long): List<TtLabel>
 
   /**
-   * `GET /calendar/{id}/events/sync[?since=N]`: the calendar's change feed, which the API orders by
-   * `updated_at`, newest change first, and pages *backwards* (the returned `since` asks for the
-   * next older page; see [EventFeed]). Every read starts at the top of the feed.
-   * - [stopAt] null reads every page until `chunk == false` (FULL): the result is
-   *   [EventsResult.complete], and absence from it means deleted.
-   * - Otherwise (INCREMENTAL) the read stops after the first page that holds an event with
-   *   `updated_at <= stopAt`. The engine passes its high-water mark minus [TimeTreeApi.FEED_OVERLAP],
-   *   so a few known events come again. Absence from such a result means nothing.
+   * FULL: `GET /calendar/{id}/events/sync[?since=N]`, every page. The feed holds the live events
+   * only, ordered by `updated_at`, newest change first, and pages *backwards* (the returned `since`
+   * asks for the next older page; see [EventFeed]). The result is [EventsResult.complete]: absence
+   * from it means deleted.
    *
    * Never returns a partial list: an error on any page throws and discards the earlier pages. A
    * cursor that repeats, or more than [TimeTreeApi.MAX_PAGES] pages, throws [TtError.ApiChanged], as
@@ -85,7 +81,21 @@ interface TimeTreeClient {
    *
    * @throws TtError.AccessLost on 403/404 for this calendar
    */
-  suspend fun events(calendarId: Long, stopAt: Long?): EventsResult
+  suspend fun events(calendarId: Long): EventsResult
+
+  /**
+   * INCREMENTAL: `GET /calendar/{id}/events?since=N`, paging forward. Every change with
+   * `updated_at >= since`: new and edited events, and deleted ones as tombstones (see
+   * [ChangeFeed]). The engine passes its high-water mark minus [TimeTreeApi.FEED_OVERLAP], so a few
+   * known events come again. The result is never complete: absence from it means nothing.
+   *
+   * Returns null if the list doesn't behave as observed (out of order, a `since` that doesn't move
+   * forward, too many pages); the engine then reads the calendar completely with [events]. Errors,
+   * duplicates and undecodable events are handled as in [events].
+   *
+   * @throws TtError.AccessLost on 403/404 for this calendar
+   */
+  suspend fun changes(calendarId: Long, since: Long): EventsResult?
 }
 
 /** The complete result of one [TimeTreeClient.events] call. */
@@ -93,8 +103,8 @@ data class EventsResult(
   /** Live events and tombstones, deduplicated by uuid. */
   val events: List<FetchedEvent>,
   /**
-   * The read reached the end of the feed (`chunk == false`). Always true for a FULL read; an
-   * INCREMENTAL one is usually not complete, and the engine never treats it as such.
+   * The read reached the end of the live feed (`chunk == false`). Always true for a FULL read
+   * ([TimeTreeClient.events]); never for a read of changes ([TimeTreeClient.changes]).
    */
   val complete: Boolean,
   /** Number of pages fetched, for the report (a FULL's second pass included). */

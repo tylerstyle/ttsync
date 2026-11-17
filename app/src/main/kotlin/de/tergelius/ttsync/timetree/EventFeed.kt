@@ -1,38 +1,31 @@
 package de.tergelius.ttsync.timetree
 
 import de.tergelius.ttsync.TtLog
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.longOrNull
 
 /**
- * Reads one calendar's change feed, `GET /calendar/{id}/events/sync`, page by page: the paging
- * rules of [TimeTreeClient.events], without HTTP. [OkHttpTimeTreeClient] passes the request as
- * [fetchPage]; engine tests pass an in-memory server. `fetchPage(null)` asks for the top of the
- * feed, `fetchPage(since)` for the page after a returned `since`.
+ * Reads one calendar's live events completely from `GET /calendar/{id}/events/sync`, page by page:
+ * the paging rules of [TimeTreeClient.events], without HTTP. [OkHttpTimeTreeClient] passes the
+ * request as [fetchPage]; engine tests pass an in-memory server. `fetchPage(null)` asks for the top
+ * of the feed, `fetchPage(since)` for the page after a returned `since`.
  *
- * How the API pages (on-device test, 2026-11-12):
+ * How the API pages (on-device tests, 2026-11-12 and 2026-11-17):
  * - The feed is ordered by `updated_at`, newest change first. A request without `since` returns
  *   the newest page. Its `since` is (the page's oldest `updated_at`) − 1 and asks for the next
  *   *older* page; `chunk == false` marks the oldest one. So `since` is a cursor that pages
- *   backwards, never "changed after": `?since=<last since>` returns nothing new.
- * - Deleted events stay in the feed as tombstones (`deactivated_at` set).
+ *   backwards (an exclusive upper bound), never "changed after".
+ * - Deleted events are not in this feed: they vanish without a trace. Only a complete read shows a
+ *   deletion, as an absence. [ChangeFeed] reads the list that keeps them.
  *
  * A read runs one or two passes from the top of the feed:
- * - **Full** (`stopAt == null`): every page until `chunk == false`. If that took more than one page
- *   and the feed was in order, a second pass re-reads the top down to the first pass's newest
- *   change − [TimeTreeApi.FEED_OVERLAP]: an event edited while the pages were read moves to the
- *   top, possibly out of a page not read yet, and must not look deleted.
- * - **Incremental** (`stopAt != null`): stops after the first page that holds an event with
- *   `updated_at <= stopAt`; everything newer is on that page or before it. If the feed turns out not
- *   to be ordered newest first, the early stop is not trusted and the read goes on to the end.
+ * - The first pass reads every page until `chunk == false`.
+ * - If that took more than one page and the feed was in order, a second pass re-reads the top down
+ *   to the first pass's newest change − [TimeTreeApi.FEED_OVERLAP]: an event edited while the pages
+ *   were read moves to the top, possibly out of a page not read yet, and must not look deleted.
+ *   The second pass stops after the first page that holds an event with `updated_at` at or below
+ *   that mark.
  *
  * Defences: more than [maxPages] requests, or a cursor that repeats within a pass, is
- * [TtError.ApiChanged]. A uuid that occurs more than once keeps its newest occurrence (by
- * [TtEvent.changedAt]; on a tie the later one). An event that does not decode is left out and
- * reported; one without a readable `updated_at` counts as newer than any decoded occurrence, so its
- * uuid stays skipped (state unknown) rather than falling back to an older version.
+ * [TtError.ApiChanged]. Duplicate and undecodable entries: see [FeedEntries].
  */
 internal class EventFeed(
   private val calendarId: Long,
@@ -40,44 +33,24 @@ internal class EventFeed(
   private val log: TtLog,
   private val fetchPage: suspend (since: Long?) -> TtEventsPage,
 ) {
-  private val byUuid = LinkedHashMap<String, FetchedEvent>()
-
-  /** The [TtEvent.changedAt] of the occurrence each uuid keeps, good or malformed. */
-  private val versions = HashMap<String, Long>()
-  private val skippedUuids = LinkedHashSet<String>()
-  private var skippedWithoutUuid = 0
-
-  /**
-   * Malformed entries seen so far, by content. The second pass of a full read sees the top pages
-   * again; an entry seen twice is logged and, without a uuid, counted once (review fix1, NIT-1).
-   */
-  private val malformedSeen = HashSet<JsonObject>()
-
+  private val entries = FeedEntries(calendarId, log)
   private var pages = 0
   private var used = false
 
-  /** One read; an instance reads once. */
-  suspend fun read(stopAt: Long?): EventsResult {
+  /** One complete read; an instance reads once. */
+  suspend fun read(): EventsResult {
     check(!used) { "an EventFeed reads once" }
     used = true
-    val first = pass(stopAt)
+    val first = pass(stopAt = null)
     val feedPages = pages
-    if (stopAt == null && pages > 1 && first.ordered && first.newest != null) {
+    if (pages > 1 && first.ordered && first.newest != null) {
       pass(first.newest - TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds)
     }
-    val skipped = skippedUuids.size + skippedWithoutUuid
     log.d(
-      "timetree: calendar $calendarId: ${byUuid.size} events in $pages pages, $skipped skipped, " +
-        "complete=${first.complete}"
+      "timetree: calendar $calendarId: ${entries.size} events in $pages pages, " +
+        "${entries.skipped} skipped, complete=${first.complete}"
     )
-    return EventsResult(
-      events = byUuid.values.toList(),
-      complete = first.complete,
-      pages = pages,
-      feedPages = feedPages,
-      skippedUuids = skippedUuids.toSet(),
-      skippedMalformed = skipped,
-    )
+    return entries.result(complete = first.complete, pages = pages, feedPages = feedPages)
   }
 
   private class Pass(
@@ -89,6 +62,7 @@ internal class EventFeed(
     val newest: Long?,
   )
 
+  /** Reads from the top: to the end ([stopAt] null), or until the first page reaching [stopAt]. */
   private suspend fun pass(stopAt: Long?): Pass {
     val requested = HashSet<Long>()
     var cursor: Long? = null
@@ -102,7 +76,7 @@ internal class EventFeed(
       pages++
       var reachedKnown = false
       for (json in page.events) {
-        val updatedAt = add(json) ?: continue
+        val updatedAt = entries.add(json) ?: continue
         if (previous != null && updatedAt > previous && ordered) {
           ordered = false
           log.w("timetree: calendar $calendarId: feed not ordered newest first; reading every page")
@@ -118,56 +92,5 @@ internal class EventFeed(
       }
       cursor = page.since
     }
-  }
-
-  /** Adds one page entry; returns its `updated_at` if readable (for ordering and stopping). */
-  private fun add(json: JsonObject): Long? {
-    val event =
-      try {
-        TtEvent.fromJson(json)
-      } catch (e: TtError.ApiChanged) {
-        null
-      }
-    if (event != null) {
-      if (keeps(event.uuid, event.changedAt)) {
-        skippedUuids -= event.uuid
-        byUuid.remove(event.uuid)
-        byUuid[event.uuid] = FetchedEvent(event, json)
-      }
-      return event.updatedAt
-    }
-    val uuid = (json["uuid"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
-    val updatedAt = json.long("updated_at")
-    val firstSeen = malformedSeen.add(json)
-    if (firstSeen) {
-      log.w(
-        "timetree: calendar $calendarId: skipped malformed event " +
-          (uuid?.let(TtLog::short) ?: "without uuid")
-      )
-    }
-    if (uuid == null) {
-      if (firstSeen) skippedWithoutUuid++
-    } else {
-      val deactivatedAt = json.long("deactivated_at")
-      val version =
-        if (updatedAt == null) Long.MAX_VALUE else maxOf(updatedAt, deactivatedAt ?: updatedAt)
-      if (keeps(uuid, version)) {
-        byUuid.remove(uuid)
-        skippedUuids += uuid
-      }
-    }
-    return updatedAt
-  }
-
-  /** Records [version] for [uuid] if it is at least as new as the kept occurrence. */
-  private fun keeps(uuid: String, version: Long): Boolean {
-    val kept = versions[uuid]
-    if (kept != null && version < kept) return false
-    versions[uuid] = version
-    return true
-  }
-
-  private companion object {
-    fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.longOrNull
   }
 }

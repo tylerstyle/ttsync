@@ -63,9 +63,9 @@ data class SyncCursor(
   val ttCalId: Long,
   /**
    * The high-water mark: the newest change (`TtEvent.changedAt`, the later of `updated_at` and
-   * `deactivated_at`, TimeTree's clock) among the events of every complete fetch so far, or 0 if
-   * the last FULL found none. An INCREMENTAL run reads the feed from the top until it reaches
-   * events older than this minus `TimeTreeApi.FEED_OVERLAP`. Null before the first FULL, or after
+   * `deactivated_at`, TimeTree's clock) among the events fetched so far, or 0 if the last FULL
+   * found none. An INCREMENTAL run reads the changes from this minus `TimeTreeApi.FEED_OVERLAP` on
+   * (`TimeTreeClient.changes`). Null before the first FULL, or after
    * the upgrade from schema 1, whose `since` was the server's backwards paging cursor: forces FULL.
    * The server's `since` is never stored.
    */
@@ -76,9 +76,8 @@ data class SyncCursor(
   /** Cached `List<TtLabel>` as JSON (`TtJson`), or null if not fetched yet. */
   val labelsJson: String?,
   /**
-   * Pages of the whole feed at the last FULL (`EventsResult.feedPages`), or null if unknown. A
-   * small feed gets a FULL on every run, a larger one INCREMENTAL runs between FULLs (DESIGN.md
-   * section 5).
+   * Pages of the whole feed at the last FULL (`EventsResult.feedPages`), or null if unknown (forces
+   * FULL). Since 0.2.1 it is only logged; 0.2.0 ran a FULL on every run for 3 pages or fewer.
    */
   val lastFullPages: Int? = null,
   /**

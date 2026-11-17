@@ -109,16 +109,26 @@ class OkHttpTimeTreeClient(
       decodeTt("labels") { TtJson.decodeFromString(TtLabelsResponse.serializer(), body) }.labels
     }
 
-  override suspend fun events(calendarId: Long, stopAt: Long?): EventsResult {
+  override suspend fun events(calendarId: Long): EventsResult {
     val budget = runBudget
     val feed =
       EventFeed(calendarId, maxPages, log) { since ->
-        dataCall(Endpoint.Events(calendarId, since), budget, dump = true) { body ->
-          decodeTt("events page") { TtJson.decodeFromString(TtEventsPage.serializer(), body) }
-        }
+        dataCall(Endpoint.Events(calendarId, since), budget, dump = true, ::decodeEventsPage)
       }
-    return feed.read(stopAt)
+    return feed.read()
   }
+
+  override suspend fun changes(calendarId: Long, since: Long): EventsResult? {
+    val budget = runBudget
+    val feed =
+      ChangeFeed(calendarId, maxPages, log) { from ->
+        dataCall(Endpoint.Changes(calendarId, from), budget, dump = true, ::decodeEventsPage)
+      }
+    return feed.read(since)
+  }
+
+  private fun decodeEventsPage(body: String): TtEventsPage =
+    decodeTt("events page") { TtJson.decodeFromString(TtEventsPage.serializer(), body) }
 
   /**
    * Debug probe, never used by a sync (`DebugReceiver` action `PROBE_EVENTS`, debug builds only).
@@ -361,6 +371,18 @@ class OkHttpTimeTreeClient(
           .build()
     }
 
+    /** `GET /calendar/{id}/events?since=N`: the list that keeps deleted events (see [ChangeFeed]). */
+    class Changes(id: Long, private val since: Long) : Endpoint("changes", id) {
+      override val dumpName = "calendar_${id}_changes_since_$since"
+
+      override fun url(base: HttpUrl): HttpUrl =
+        base
+          .newBuilder()
+          .addPathSegments("calendar/$calendarId/events")
+          .addQueryParameter("since", since.toString())
+          .build()
+    }
+
     /** [probeEvents]: `GET /calendar/{id}/<list>[?since=N]`. */
     class Probe(id: Long, private val list: ProbeList, private val since: Long?) : Endpoint("probe", id) {
       override val dumpName = "calendar_${id}_${list.dumpName}_" + (since?.let { "since_$it" } ?: "top")
@@ -431,7 +453,7 @@ enum class ProbeList(val path: String, val dumpName: String) {
   /** The change feed that syncs read. */
   SYNC("events/sync", "sync"),
 
-  /** `/calendar/{id}/events`, which another client says also lists deleted events. */
+  /** `/calendar/{id}/events`, which also lists deleted events ([ChangeFeed]). */
   EVENTS("events", "list"),
 }
 

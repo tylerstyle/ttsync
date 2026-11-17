@@ -68,7 +68,7 @@ class SyncEngineTest {
     assertEquals(h.now, cursor.lastFullAt)
     assertNull(h.store.meta.get(MetaKeys.RUN_IN_PROGRESS))
     assertEquals(1, h.gateway.uploadRequests)
-    assertEquals(listOf("begin", "calendars", "labels:1", "events:1:null"), h.client.requests)
+    assertEquals(listOf("begin", "calendars", "labels:1", "events:1"), h.client.requests)
     assertEquals(report, h.status.value.lastReport)
     assertTrue(h.log.lines.any { it.startsWith("I run finished") })
   }
@@ -105,14 +105,15 @@ class SyncEngineTest {
     assertEquals(1, h.gateway.uploadRequests)
   }
 
-  // Incremental reads of the real feed (newest change first, paged backwards) -------------------
+  // Incremental reads of the change list (/events: oldest change first, tombstones kept) ---------
 
   private val overlap = TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds
 
   @Test
   fun incrementalAfterAFullRunPicksUpAnEditANewEventAndATombstone() = runTest {
-    // The bug from the device test: the app stored the server's last `since` (a cursor for OLDER
-    // events) and the next INCREMENTAL run asked for `?since=<that>`, which returned nothing.
+    // B1 (0.1.0): the app stored the sync feed's `since` (a cursor for OLDER events) and asked for
+    // `?since=<that>`, which returned nothing. 0.2.1: deletions vanish from that feed, so the change
+    // list is read instead, from the high-water mark minus the overlap.
     h.sync().assertOk()
     val known = h.store.cursors.get(CAL_A)!!.highWater!!
     val a1 = idOf(A1)
@@ -122,6 +123,7 @@ class SyncEngineTest {
     h.client.put(CAL_A, h.timed(a4, day = 3, title = "New"))
     h.client.deactivate(CAL_A, A2)
     h.client.pageRequests.clear()
+    h.client.requests.clear()
 
     val report = h.sync().assertOk()
     assertEquals(SyncMode.INCREMENTAL, report.calendars.single().mode)
@@ -132,27 +134,60 @@ class SyncEngineTest {
     assertEquals("Brunch", h.gateway.rows.getValue(a1).title)
     assertTrue(h.gateway.rows.getValue(a2).deleted)
     assertEquals(setOf(A1, A3, SERIES, a4), h.copies().keys)
-    // From the top, never with a stored `since`: the three changes fill page 1 and half of page 2,
-    // page 3 starts with known events.
-    assertEquals("events:1:${known - overlap}", h.client.requests.last())
-    assertEquals("1:top", h.client.pageRequests.first())
-    assertEquals(3, h.client.pageRequests.size)
+    // From the mark minus the overlap, never with a stored server `since`: the three changes fill
+    // page 1 and half of page 2.
+    assertEquals("changes:1:${known - overlap}", h.client.requests.last())
+    assertEquals("1:changes since=${known - overlap}", h.client.pageRequests.first())
+    assertEquals(2, h.client.pageRequests.size)
+    assertFalse(h.client.requests.any { it.startsWith("events:") || it.startsWith("labels:") })
     // The new high-water mark is the newest change (the tombstone's), not a server cursor.
     assertEquals(h.client.newestChange(CAL_A), h.store.cursors.get(CAL_A)!!.highWater)
-    assertEquals(h.client.event(CAL_A, A2).deactivatedAt, h.store.cursors.get(CAL_A)!!.highWater)
+    assertEquals(h.client.event(CAL_A, A2).updatedAt, h.store.cursors.get(CAL_A)!!.highWater)
     h.assertForeignUntouched()
 
     assertEquals(0, h.sync().assertOk().counts.writes)
   }
 
   @Test
-  fun incrementalStopsAfterTheFirstPageWhenTheTopOfTheFeedIsKnown() = runTest {
+  fun incrementalWithoutChangesIsOneRequest() = runTest {
     h.sync().assertOk()
+    val known = h.store.cursors.get(CAL_A)!!.highWater!!
     h.client.pageRequests.clear()
     val report = h.sync().assertOk()
     assertEquals(SyncMode.INCREMENTAL, report.calendars.single().mode)
     assertEquals(0, report.counts.writes)
-    assertEquals(listOf("1:top"), h.client.pageRequests)
+    assertEquals(listOf("1:changes since=${known - overlap}"), h.client.pageRequests)
+  }
+
+  @Test
+  fun deletingASeriesInTimeTreeDeletesItsCopyWithTheNextRun() = runTest {
+    h.sync().assertOk()
+    val series = idOf(SERIES)
+    h.client.deactivate(CAL_A, SERIES)
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.INCREMENTAL, report.calendars.single().mode)
+    assertEquals(1, report.counts.deleted)
+    assertTrue(h.gateway.rows.getValue(series).deleted)
+    assertFalse(SERIES in h.copies())
+    h.assertForeignUntouched()
+  }
+
+  @Test
+  fun aChangeListThatCannotBeTrustedFallsBackToAFullRead() = runTest {
+    h.sync().assertOk()
+    h.client.changesOutOfOrder = true
+    h.client.edit(CAL_A, A1) { it.copy(title = "Brunch") }
+    h.client.edit(CAL_A, A2) { it.copy(title = "Supper") }
+    h.client.purge(CAL_A, A3) // only a complete read notices this
+    h.client.requests.clear()
+
+    val report = h.sync().assertOk()
+    assertEquals(SyncMode.FULL, report.calendars.single().mode)
+    assertEquals(SyncCounts(updated = 2, deleted = 1), report.counts.copy(skipped = 0, unmanagedMarked = 0))
+    assertTrue(h.log.lines.any { it == "I calendar 1: FULL (change list unusable)" })
+    assertEquals(listOf("calendars", "labels:1", "events:1"), h.client.requests.filterNot { it.startsWith("changes") || it == "begin" })
+    assertTrue(h.client.requests.any { it.startsWith("changes:1:") })
+    h.assertForeignUntouched()
   }
 
   @Test
@@ -200,7 +235,7 @@ class SyncEngineTest {
     h.client.pageRequests.clear()
     val again = h.sync().assertOk()
     assertEquals(SyncMode.INCREMENTAL, again.calendars.single().mode)
-    assertEquals(4, h.client.pageRequests.size) // the whole feed: none is old enough to stop at
+    assertEquals(4, h.client.pageRequests.size) // all 7 changes are within the overlap
     assertEquals(0, again.counts.writes)
   }
 
@@ -214,32 +249,33 @@ class SyncEngineTest {
     assertEquals(1, h.sync().assertOk().counts.added)
   }
 
-  // When a run is FULL (deleted events vanish from the feed, so only a FULL sees them) ------------
+  // When a run is FULL ----------------------------------------------------------------------------
 
   @Test
-  fun aSmallFeedIsReadCompletelyOnEveryRunSoDeletionsArriveWithinTheInterval() = runTest {
+  fun aSmallCalendarRunsIncrementalAndADeletionArrivesWithTheNextRun() = runTest {
+    // 0.2.0 read a small feed completely on every run: the sync feed leaves deletions out.
     h.client.pageSize = 10 // calendar A fits on one page
     h.sync().assertOk()
     assertEquals(1, h.store.cursors.get(CAL_A)!!.lastFullPages)
-    h.client.purge(CAL_A, A3) // deleted in TimeTree: gone from the feed, no tombstone
+    h.client.deactivate(CAL_A, A3) // deleted in TimeTree: a tombstone in the change list
     h.now += 60 * 60_000L
 
     val report = h.sync().assertOk()
-    assertEquals(SyncMode.FULL, report.calendars.single().mode)
+    assertEquals(SyncMode.INCREMENTAL, report.calendars.single().mode)
     assertEquals(1, report.counts.deleted)
     assertFalse(A3 in h.copies())
-    assertTrue(h.log.lines.any { it == "I calendar 1: FULL (small feed, pages=1)" })
+    assertTrue(h.log.lines.any { it == "I calendar 1: INCREMENTAL (last FULL 60 min ago, pages=1)" })
     h.assertForeignUntouched()
   }
 
   @Test
-  fun aLargerFeedRunsIncrementalWithAFullAtLeastEverySixHours() = runTest {
+  fun aFullRunAtLeastEverySixHoursCatchesWhatTheChangeListMisses() = runTest {
     h.sync().assertOk() // 4 pages
     h.now += 6 * 60 * 60_000L - 60_000L
     assertEquals(SyncMode.INCREMENTAL, h.sync().assertOk().calendars.single().mode)
     assertTrue(h.log.lines.any { it == "I calendar 1: INCREMENTAL (last FULL 359 min ago, pages=4)" })
 
-    h.client.purge(CAL_A, A3)
+    h.client.purge(CAL_A, A3) // a tombstone TimeTree no longer keeps, say
     h.now += 60_000L
     val full = h.sync().assertOk()
     assertEquals(SyncMode.FULL, full.calendars.single().mode)
@@ -249,16 +285,15 @@ class SyncEngineTest {
   }
 
   @Test
-  fun theFeedSizeOfTheLastFullDecidesAndIsRecordedAgain() = runTest {
-    h.client.pageSize = 3 // 7 events: 3 pages, still small
+  fun theFeedSizeIsRecordedByFullRunsOnly() = runTest {
+    h.client.pageSize = 3 // 7 events: 3 pages
     h.sync().assertOk()
     assertEquals(3, h.store.cursors.get(CAL_A)!!.lastFullPages)
-    assertEquals(3, DefaultSyncEngine.SMALL_FEED_PAGES)
     repeat(3) { i -> h.client.put(CAL_A, h.timed("c%031d".format(i), day = 1, title = "E$i")) }
-    assertEquals(SyncMode.FULL, h.sync().assertOk().calendars.single().mode) // records 4 pages
-    assertEquals(4, h.store.cursors.get(CAL_A)!!.lastFullPages)
     assertEquals(SyncMode.INCREMENTAL, h.sync().assertOk().calendars.single().mode)
-    assertEquals(4, h.store.cursors.get(CAL_A)!!.lastFullPages) // kept by INCREMENTAL runs
+    assertEquals(3, h.store.cursors.get(CAL_A)!!.lastFullPages) // kept by INCREMENTAL runs
+    assertEquals(SyncMode.FULL, h.sync(full = true).assertOk().calendars.single().mode)
+    assertEquals(4, h.store.cursors.get(CAL_A)!!.lastFullPages)
   }
 
   @Test
@@ -273,7 +308,7 @@ class SyncEngineTest {
   @Test
   fun anIncrementalRunNeverDeletesByAbsence() = runTest {
     h.sync().assertOk()
-    h.client.pageSize = 100 // the incremental read happens to see the whole feed
+    h.client.pageSize = 100 // the change list fits on one page
     h.client.purge(CAL_A, A3)
     h.client.edit(CAL_A, A1) { it.copy(title = "Changed") }
     val report = h.sync().assertOk()
@@ -826,7 +861,7 @@ class SyncEngineTest {
   fun aRunThatFailsAfterThePreconditionsStillReportsPendingUploads() = runTest {
     h.sync().assertOk()
     h.now += 60 * 60_000L
-    h.client.fail = { if (it.startsWith("events")) TtError.Transient(503) else null }
+    h.client.fail = { if (it.startsWith("changes")) TtError.Transient(503) else null } // INCREMENTAL
     val report = h.sync()
     assertEquals(SyncProblem.NETWORK, report.failure?.problem)
     assertEquals(4, report.notUploaded)

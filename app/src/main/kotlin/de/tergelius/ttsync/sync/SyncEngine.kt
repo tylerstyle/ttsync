@@ -741,23 +741,27 @@ class DefaultSyncEngine(
       if (undecodable > 0) log.w("calendar ${work.id}: $undecodable snapshots unreadable; FULL")
 
       val cursor = work.cursor
-      val fullReason = fullReason(cursor, mapperChanged, undecodable, work.filterHash)
-      val full = fullReason != null
-      work.mode = if (full) SyncMode.FULL else SyncMode.INCREMENTAL
-      val why =
-        fullReason
-          ?: "last FULL ${minutesSince(cursor.lastFullAt)} min ago, pages=${cursor.lastFullPages}"
-      log.i("calendar ${work.id}: ${work.mode} ($why)")
-
       try {
+        var fullReason = fullReason(cursor, mapperChanged, undecodable, work.filterHash)
+        // INCREMENTAL reads the changes since the known high-water mark, minus an overlap for
+        // changes committed with a slightly older timestamp. Deletions come as tombstones.
+        val changes =
+          if (fullReason != null) null
+          else {
+            val since = checkNotNull(cursor.highWater) - TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds
+            timeTree { client.changes(work.id, since) }.also { if (it == null) fullReason = "change list unusable" }
+          }
+        val full = fullReason != null
+        work.mode = if (full) SyncMode.FULL else SyncMode.INCREMENTAL
+        val why =
+          fullReason
+            ?: "last FULL ${minutesSince(cursor.lastFullAt)} min ago, pages=${cursor.lastFullPages}"
+        log.i("calendar ${work.id}: ${work.mode} ($why)")
+
         var labels = if (full) null else decodeLabels(cursor.labelsJson)
         val labelsFresh = labels == null
         if (labels == null) labels = timeTree { client.labels(work.id) }
-        // INCREMENTAL reads from the top of the feed (newest change first) down to the known
-        // high-water mark, minus an overlap for changes committed with a slightly older timestamp.
-        val stopAt =
-          if (full) null else cursor.highWater?.minus(TimeTreeApi.FEED_OVERLAP.inWholeMilliseconds)
-        val result = timeTree { client.events(work.id, stopAt) }
+        val result = changes ?: timeTree { client.events(work.id) }
         if (!labelsFresh) {
           val known = labels.mapTo(HashSet()) { it.id }
           val unknownLabel =
@@ -769,7 +773,7 @@ class DefaultSyncEngine(
         work.fetched = result.events
         work.fetchedUuids = result.events.mapTo(HashSet()) { it.event.uuid }
         // FULL: the newest change of the whole feed (0 for an empty one). INCREMENTAL: never lower
-        // than before, since it re-reads only the top of the feed.
+        // than before, since it reads only the changes from the last mark on.
         work.highWater =
           if (full) result.highWater ?: 0L
           else maxOf(cursor.highWater ?: 0L, result.highWater ?: Long.MIN_VALUE)
@@ -792,12 +796,12 @@ class DefaultSyncEngine(
     }
 
     /**
-     * Why this calendar's run must be FULL, or null for INCREMENTAL (DESIGN.md section 5). Deleted
-     * events seem to vanish from the feed rather than come back as tombstones, so only a FULL sees
-     * them: a small feed ([SMALL_FEED_PAGES] pages or fewer at its last FULL) is read completely on
-     * every run, a larger one at least every [FULL_INTERVAL_MILLIS]. A changed filter needs a FULL
-     * too: copies of events it now excludes must go, and events it now includes must be copied,
-     * whether they changed or not.
+     * Why this calendar's run must be FULL, or null for INCREMENTAL (DESIGN.md section 5).
+     * INCREMENTAL reads the list of changes, which also holds deleted events. A FULL at least every
+     * [FULL_INTERVAL_MILLIS] is the safety net: it notices whatever that list no longer shows (a
+     * tombstone TimeTree dropped while the phone was off, say) and repairs copies changed in Google.
+     * A changed filter needs a FULL too: copies of events it now excludes must go, and events it now
+     * includes must be copied, whether they changed or not.
      */
     private fun fullReason(
       cursor: SyncCursor,
@@ -814,7 +818,6 @@ class DefaultSyncEngine(
         cursor.highWater == null -> "no high-water mark"
         lastFull == null || pages == null -> "no FULL recorded"
         cursor.filterHash != filterHash -> "filter changed"
-        pages <= SMALL_FEED_PAGES -> "small feed, pages=$pages"
         startedAt < lastFull -> "clock went back"
         startedAt - lastFull >= FULL_INTERVAL_MILLIS ->
           "last FULL ${minutesSince(lastFull)} min ago, pages=$pages"
@@ -1151,13 +1154,7 @@ class DefaultSyncEngine(
     /** The process-wide lock: runs and user actions never overlap. */
     private val LOCK = Mutex()
 
-    /**
-     * A feed of at most this many pages at its last FULL gets a FULL on every run: a few requests,
-     * and deletions (which do not show up in the feed) reach Google within the sync interval.
-     */
-    const val SMALL_FEED_PAGES = 3
-
-    /** A larger feed gets INCREMENTAL runs, with a FULL at least this often. */
+    /** Runs between FULLs are INCREMENTAL; a FULL comes at least this often. */
     val FULL_INTERVAL_MILLIS: Long = 6.hours.inWholeMilliseconds
 
     /** A copy still `dirty` this long after the app wrote it counts as not uploaded. */

@@ -257,7 +257,9 @@ class FakeClient(private val calls: Calls) : TimeTreeClient {
 
   override suspend fun labels(calendarId: Long): List<TtLabel> = error("not used")
 
-  override suspend fun events(calendarId: Long, stopAt: Long?): EventsResult = error("not used")
+  override suspend fun events(calendarId: Long): EventsResult = error("not used")
+
+  override suspend fun changes(calendarId: Long, since: Long): EventsResult? = error("not used")
 }
 
 class FakeNotifier(private val calls: Calls) : SyncNotifier {

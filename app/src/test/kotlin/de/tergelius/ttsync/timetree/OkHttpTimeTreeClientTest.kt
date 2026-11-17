@@ -157,7 +157,7 @@ class OkHttpTimeTreeClientTest {
   fun c2_onePage() = runTest {
     server.enqueue(response(fixture("events-page.json")))
 
-    val result = client.events(7000001, stopAt = null)
+    val result = client.events(7000001)
 
     assertEquals("/api/v1/calendar/7000001/events/sync", take().target) // the top: no since
     assertEquals(1, server.requestCount) // one page: no second pass
@@ -170,6 +170,92 @@ class OkHttpTimeTreeClientTest {
     // The raw object is kept verbatim for the snapshot store.
     assertTrue(result.events.all { it.json["uuid"]!!.jsonPrimitive.content == it.event.uuid })
     assertEquals(listOf("calendar_7000001_events_top"), sink.names)
+  }
+
+  // C9 changes: /calendar/{id}/events --------------------------------------------------------------
+  //
+  // The list (on-device probe, 2026-11-17) keeps deleted events as tombstones, oldest change first;
+  // `since=N` returns `updated_at >= N`, and a page's `since` is its newest `updated_at` + 1.
+
+  /** A tombstone: deleted [minutes] after T0, `updated_at` 30 ms after `deactivated_at`. */
+  private fun tomb(uuid: String, minutes: Int) =
+    ev(uuid, minutes).replace("\"deactivated_at\":null", "\"deactivated_at\":${at(minutes) - 30}")
+
+  /** A page of the list: its `since` is its newest event's `updated_at` + 1. */
+  private fun listPage(chunk: Boolean, newestMinutes: Int, vararg events: String) =
+    page(chunk, at(newestMinutes) + 1, *events)
+
+  @Test
+  fun c9_changesPageForwardFromSinceAndKeepTombstones() = runTest {
+    server.enqueue(response(listPage(true, 20, ev("a", 10), tomb("b", 20))))
+    server.enqueue(response(listPage(false, 40, ev("c", 30), tomb("d", 40))))
+
+    val result = client.changes(7, since = at(10))!!
+
+    assertEquals(
+      listOf("/api/v1/calendar/7/events?since=${at(10)}", "/api/v1/calendar/7/events?since=${at(20) + 1}"),
+      List(2) { take().target },
+    )
+    assertFalse(result.complete) // a list of changes never proves absence
+    assertEquals(2, result.pages)
+    assertEquals(listOf("a", "b", "c", "d"), result.events.map { it.event.uuid })
+    assertEquals(listOf("b", "d"), result.events.filter { it.event.isDeactivated }.map { it.event.uuid })
+    assertEquals(at(40), result.highWater)
+    assertEquals(
+      listOf("calendar_7_changes_since_${at(10)}", "calendar_7_changes_since_${at(20) + 1}"),
+      sink.names,
+    )
+  }
+
+  @Test
+  fun c9_nothingNewIsAnEmptyResult() = runTest {
+    server.enqueue(response(page(false, at(10)))) // the server echoes since
+
+    val result = client.changes(7, since = at(10))!!
+
+    assertTrue(result.events.isEmpty())
+    assertNull(result.highWater)
+    assertEquals(1, server.requestCount)
+  }
+
+  @Test
+  fun c9_aListThatDoesNotBehaveAsObservedIsNotTrusted() = runTest {
+    server.enqueue(response(listPage(false, 20, ev("b", 20), ev("a", 10)))) // newest first
+    assertNull(client.changes(7, since = at(0)))
+    server.enqueue(response(listPage(false, 20, ev("a", 5), ev("b", 20)))) // older than since
+    assertNull(client.changes(7, since = at(10)))
+    server.enqueue(response(page(true, at(10), ev("a", 10)))) // more to come, but since stays
+    assertNull(client.changes(7, since = at(10)))
+
+    assertEquals(3, server.requestCount)
+    assertEquals(
+      listOf("not ordered oldest first", "an entry older than since", "since did not move forward"),
+      log.lines.filter { "change list unusable" in it }.map { it.substringAfter("unusable (").removeSuffix(")") },
+    )
+  }
+
+  @Test
+  fun c9_aListOfTooManyPagesIsNotTrusted() = runTest {
+    server.dispatcher =
+      object : Dispatcher() {
+        override fun dispatch(request: RecordedRequest): MockResponse {
+          val since = request.url.queryParameter("since")!!.toLong()
+          return response(page(true, since + 1, eventJson("e$since", updatedAt = since)))
+        }
+      }
+    val capped =
+      OkHttpTimeTreeClient(TimeTreeApi.newOkHttpClient(), store, pacer, sink, server.url("/api/v1/"), maxPages = 5)
+
+    assertNull(capped.changes(7, since = at(0)))
+    assertEquals(5, server.requestCount)
+  }
+
+  @Test
+  fun c9_changesFailLikeEvents() = runTest {
+    server.enqueue(response(errorBody(-1), 404))
+
+    val error = expectError<TtError.AccessLost>(thrown) { client.changes(7, since = at(0)) }
+    assertEquals(7L, error.calendarId)
   }
 
   // Debug probe (DebugReceiver PROBE_EVENTS) ---------------------------------------------------
@@ -229,7 +315,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(feedPage(true, 40, ev("c", 50, title = "Edited"), ev("a", 40))))
     server.enqueue(response(feedPage(true, 30, ev("b", 30))))
 
-    val result = client.events(7, stopAt = null)
+    val result = client.events(7)
 
     assertEquals(
       listOf(null, "since=${at(30) - 1}", "since=${at(10) - 1}", null, "since=${at(40) - 1}"),
@@ -259,53 +345,19 @@ class OkHttpTimeTreeClientTest {
     // A stale copy of "a" after the newer one: updated_at decides, not the position.
     server.enqueue(response(feedPage(false, 0, ev("a", 20, title = "New"), ev("a", 0, title = "Old"))))
 
-    val result = client.events(7, stopAt = null)
+    val result = client.events(7)
 
     assertEquals("New", result.events.single().event.title)
   }
 
   @Test
-  fun c4_incrementalStartsAtTheTopAndStopsAtTheFirstPageWithAKnownEvent() = runTest {
-    server.enqueue(response(feedPage(true, 30, ev("a", 40), ev("b", 30))))
-    server.enqueue(response(feedPage(true, 10, ev("c", 20), ev("d", 10))))
-
-    val result = client.events(7, stopAt = at(15))
-
-    assertEquals(listOf(null, "since=${at(30) - 1}"), List(2) { take().url.encodedQuery })
-    assertEquals(2, server.requestCount) // not the older pages
-    assertFalse(result.complete)
-    assertEquals(listOf("a", "b", "c", "d"), result.events.map { it.event.uuid })
-    assertEquals(at(40), result.highWater)
-  }
-
-  @Test
-  fun c4_incrementalWithAKnownTopReadsOnePage() = runTest {
-    server.enqueue(response(feedPage(true, 30, ev("a", 40), ev("b", 30))))
-
-    val result = client.events(7, stopAt = at(38))
-
-    assertEquals(1, server.requestCount)
-    assertEquals(1, result.pages)
-    assertFalse(result.complete)
-  }
-
-  @Test
-  fun c4_incrementalThatReachesTheEndIsComplete() = runTest {
-    server.enqueue(response(feedPage(false, 30, ev("a", 40), ev("b", 30))))
-
-    val result = client.events(7, stopAt = 0)
-
-    assertTrue(result.complete)
-    assertEquals(1, server.requestCount)
-  }
-
-  @Test
-  fun c4_aFeedOutOfOrderIsReadToTheEnd() = runTest {
-    // The early stop relies on newest-first order; without it, read on (and say so in the log).
+  fun c4_aFeedOutOfOrderGetsNoSecondPass() = runTest {
+    // The second pass's early stop relies on newest-first order; without it, the first pass alone
+    // counts (and the log says so).
     server.enqueue(response(feedPage(true, 0, ev("old", 0), ev("new", 40))))
     server.enqueue(response(feedPage(false, 0, ev("x", 20))))
 
-    val result = client.events(7, stopAt = at(10))
+    val result = client.events(7)
 
     assertEquals(2, server.requestCount)
     assertTrue(result.complete)
@@ -319,7 +371,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(page(true, 300, eventJson("b"))))
     server.enqueue(response(page(true, 500, eventJson("c"))))
 
-    expectError<TtError.ApiChanged>(thrown) { client.events(7, stopAt = null) }
+    expectError<TtError.ApiChanged>(thrown) { client.events(7) }
     assertEquals(3, server.requestCount)
   }
 
@@ -328,7 +380,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(page(true, 100, eventJson("a"))))
     server.enqueue(response(page(true, 100, eventJson("b"))))
 
-    expectError<TtError.ApiChanged>(thrown) { client.events(7, stopAt = 0) }
+    expectError<TtError.ApiChanged>(thrown) { client.events(7) }
     assertEquals(2, server.requestCount)
   }
 
@@ -346,7 +398,7 @@ class OkHttpTimeTreeClientTest {
       OkHttpTimeTreeClient(
         TimeTreeApi.newOkHttpClient(), store, pacer, sink, server.url("/api/v1/"), maxPages = 20)
 
-    expectError<TtError.ApiChanged>(thrown) { capped.events(7, stopAt = null) }
+    expectError<TtError.ApiChanged>(thrown) { capped.events(7) }
     assertEquals(20, server.requestCount)
     assertEquals(500, TimeTreeApi.MAX_PAGES)
   }
@@ -358,7 +410,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(page(true, 200, eventJson("a"))))
     server.enqueue(response("oops", 503))
 
-    val error = expectError<TtError.Transient>(thrown) { client.events(7, stopAt = null) }
+    val error = expectError<TtError.Transient>(thrown) { client.events(7) }
     assertEquals(503, error.httpStatus)
     assertEquals(listOf("calendar_7_events_top", "calendar_7_events_since_200_http503"), sink.names)
   }
@@ -374,7 +426,7 @@ class OkHttpTimeTreeClientTest {
         .build()
     )
 
-    val error = expectError<TtError.Transient>(thrown) { client.events(7, stopAt = null) }
+    val error = expectError<TtError.Transient>(thrown) { client.events(7) }
     assertNull(error.httpStatus)
   }
 
@@ -383,7 +435,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(page(true, 200, eventJson("a"))))
     server.enqueue(response(errorBody(-1), 403))
 
-    val error = expectError<TtError.AccessLost>(thrown) { client.events(7, stopAt = null) }
+    val error = expectError<TtError.AccessLost>(thrown) { client.events(7) }
     assertEquals(7L, error.calendarId)
     assertEquals(403, error.httpStatus)
     assertEquals(0, store.succeeded.size) // 403 on events is not an auth failure
@@ -395,7 +447,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(feedPage(false, 10, ev("c", 10))))
     server.enqueue(response("oops", 503))
 
-    expectError<TtError.Transient>(thrown) { client.events(7, stopAt = null) }
+    expectError<TtError.Transient>(thrown) { client.events(7) }
     assertEquals(3, server.requestCount)
   }
 
@@ -404,7 +456,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(page(true, 200, eventJson("a"))))
     server.enqueue(response("""{"events":[""", 200))
 
-    expectError<TtError.ApiChanged>(thrown) { client.events(7, stopAt = null) }
+    expectError<TtError.ApiChanged>(thrown) { client.events(7) }
   }
 
   @Test
@@ -412,7 +464,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(page(true, 200, eventJson("a"))))
     server.enqueue(response("""{"chunk":false,"since":300}"""))
 
-    expectError<TtError.ApiChanged>(thrown) { client.events(7, stopAt = null) }
+    expectError<TtError.ApiChanged>(thrown) { client.events(7) }
   }
 
   // Single malformed events and tombstones ----------------------------------------------------
@@ -425,7 +477,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(feedPage(false, 20, noUuid, ev("c", 20))))
     server.enqueue(response(feedPage(true, 20, ev("a", 40), brokenLive, ev("c", 20)))) // 2nd pass
 
-    val result = client.events(7, stopAt = null)
+    val result = client.events(7)
 
     assertEquals(setOf("a", "c"), result.events.map { it.event.uuid }.toSet())
     assertEquals(setOf("bbbbbbbbbbbb"), result.skippedUuids)
@@ -445,7 +497,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(feedPage(false, 10, ev("c", 10))))
     server.enqueue(response(feedPage(true, 30, ev("a", 40), noUuid, brokenLive, ev("b", 30))))
 
-    val result = client.events(7, stopAt = null)
+    val result = client.events(7)
 
     assertEquals(3, result.pages)
     assertEquals(setOf("a", "b", "c"), result.events.map { it.event.uuid }.toSet())
@@ -464,7 +516,7 @@ class OkHttpTimeTreeClientTest {
     server.enqueue(response(feedPage(false, 5, ev("a", 10), broken("b", 5))))
     server.enqueue(response(feedPage(true, 20, broken("a", 30), ev("b", 20)))) // the second pass
 
-    val result = client.events(7, stopAt = null)
+    val result = client.events(7)
 
     assertEquals(listOf("b"), result.events.map { it.event.uuid }) // "a" is broken in its newest form
     assertEquals(setOf("a"), result.skippedUuids)
@@ -478,7 +530,7 @@ class OkHttpTimeTreeClientTest {
           "start_at":null}"""
     server.enqueue(response(page(false, 300, eventJson("p1"), tombstone)))
 
-    val result = client.events(7, stopAt = null)
+    val result = client.events(7)
 
     val fetched = result.events.single { it.event.uuid == "t1" }
     assertTrue(fetched.event.isDeactivated)
@@ -499,7 +551,7 @@ class OkHttpTimeTreeClientTest {
           "deactivated_at":${at(30)}}"""
     server.enqueue(response(feedPage(false, 0, ev("a", 20), tombstone)))
 
-    val result = client.events(7, stopAt = null)
+    val result = client.events(7)
 
     assertEquals(at(30), result.highWater) // the deletion is the newest change
   }
@@ -648,7 +700,7 @@ class OkHttpTimeTreeClientTest {
         .format(Instant.ofEpochMilli(now).plusSeconds(3 * 3600))
     server.enqueue(response("", 429, "Retry-After" to date))
 
-    val error = expectError<TtError.RateLimited>(thrown) { client.events(7, stopAt = null) }
+    val error = expectError<TtError.RateLimited>(thrown) { client.events(7) }
     assertEquals(3.hours, error.retryAfter)
   }
 
@@ -732,7 +784,7 @@ class OkHttpTimeTreeClientTest {
 
     expectError<TtError.Transient>(thrown) { client.calendars() }
     expectError<TtError.AccessLost>(thrown) { client.labels(7) }
-    expectError<TtError.RateLimited>(thrown) { client.events(7, stopAt = null) }
+    expectError<TtError.RateLimited>(thrown) { client.events(7) }
 
     assertEquals(emptyList<String>(), store.rotated)
     assertEquals("sess-old", store.session)

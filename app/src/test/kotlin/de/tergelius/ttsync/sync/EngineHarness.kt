@@ -24,6 +24,7 @@ import de.tergelius.ttsync.settings.SyncStatus
 import de.tergelius.ttsync.store.JdbcSqlConnection
 import de.tergelius.ttsync.store.MappingStore
 import de.tergelius.ttsync.store.SyncDatabase
+import de.tergelius.ttsync.timetree.ChangeFeed
 import de.tergelius.ttsync.timetree.EventFeed
 import de.tergelius.ttsync.timetree.EventsResult
 import de.tergelius.ttsync.timetree.TimeTreeApi
@@ -229,11 +230,14 @@ class EngineHarness {
   // ---------------------------------------------------------------------------------------------
 
   /**
-   * TimeTree's sync endpoint in memory, paging like the real API (on-device test, 2026-11-12): the
-   * feed is ordered by `updated_at`, newest change first, [pageSize] events a page. A page's
-   * `since` is its oldest `updated_at` − 1 and asks for the next *older* page; `chunk == false`
-   * marks the oldest one. Deleted events stay in the feed as tombstones. The paging rules are the
-   * real client's ([EventFeed]); only HTTP is replaced.
+   * TimeTree's two event lists in memory, paging like the real API (on-device tests, 2026-11-12 and
+   * 2026-11-17), [pageSize] events a page. The paging rules are the real client's ([EventFeed],
+   * [ChangeFeed]); only HTTP is replaced.
+   * - `/events/sync` ([events]): live events only, newest change first. A page's `since` is its
+   *   oldest `updated_at` − 1 and asks for the next *older* page; `chunk == false` marks the
+   *   oldest one.
+   * - `/events` ([changes]): live events and tombstones, oldest change first, `updated_at >=
+   *   since`. A page's `since` is its newest `updated_at` + 1 (the asked `since` if it is empty).
    *
    * Every change gets a new `updated_at` from TimeTree's own [clock], [step] apart.
    */
@@ -248,17 +252,23 @@ class EngineHarness {
     /** Between two changes; more than [TimeTreeApi.FEED_OVERLAP], so incremental reads stop early. */
     var step = 10 * 60_000L
 
-    /**
-     * 2: calendar A's 7 events make 4 pages, more than [DefaultSyncEngine.SMALL_FEED_PAGES], so
-     * runs between FULLs are INCREMENTAL unless a test makes the feed small.
-     */
+    /** 2: calendar A's 7 events make 4 pages, so FULL reads page (and read the top twice). */
     var pageSize = 2
 
-    /** Every request, e.g. `calendars`, `labels:1`, `events:1:null` (one per read, not per page). */
+    /**
+     * Every request, e.g. `calendars`, `labels:1`, `events:1` (a FULL read), `changes:1:<since>`
+     * (one per read, not per page).
+     */
     val requests = mutableListOf<String>()
 
-    /** Every page request of the events reads, e.g. `1:top`, `1:since=1794400599999`. */
+    /**
+     * Every page request of the events reads, e.g. `1:top`, `1:since=1794400599999` (`/events/sync`),
+     * `1:changes since=1794400480000` (`/events`).
+     */
     val pageRequests = mutableListOf<String>()
+
+    /** Makes [changes] answer out of order, as an unknown API change would. */
+    var changesOutOfOrder = false
 
     /** Return a TtError to make that request fail. */
     var fail: ((String) -> TtError?)? = null
@@ -280,14 +290,17 @@ class EngineHarness {
     fun edit(calendarId: Long, uuid: String, change: (TtEvent) -> TtEvent) =
       put(calendarId, change(event(calendarId, uuid)))
 
-    /** Deleted in TimeTree: a tombstone. [unknownTimes] sends start/end 0 like real tombstones may. */
+    /**
+     * Deleted in TimeTree: a tombstone, whose `updated_at` is the deletion (about 30 ms after
+     * `deactivated_at`, as on the phone). [unknownTimes] sends start/end 0 like tombstones may.
+     */
     fun deactivate(calendarId: Long, uuid: String, unknownTimes: Boolean = false) =
       edit(calendarId, uuid) {
-        val dead = it.copy(deactivatedAt = clock + step)
+        val dead = it.copy(deactivatedAt = clock + step - 30)
         if (unknownTimes) dead.copy(startAt = 0, endAt = 0) else dead
       }
 
-    /** Gone without a trace: missing from every later fetch. */
+    /** Gone without a trace, as when TimeTree drops an old tombstone: missing from every later fetch. */
     fun purge(calendarId: Long, uuid: String) {
       events.getValue(calendarId).remove(uuid)
     }
@@ -320,8 +333,8 @@ class EngineHarness {
       return labels[calendarId].orEmpty()
     }
 
-    override suspend fun events(calendarId: Long, stopAt: Long?): EventsResult {
-      record("events:$calendarId:$stopAt")
+    override suspend fun events(calendarId: Long): EventsResult {
+      record("events:$calendarId")
       var page = 0
       val feed =
         EventFeed(calendarId, TimeTreeApi.MAX_PAGES, TtLog.None) { since ->
@@ -329,12 +342,32 @@ class EngineHarness {
           pageRequests += "$calendarId:" + (since?.let { "since=$it" } ?: "top")
           serve(calendarId, since)
         }
-      return feed.read(stopAt)
+      return feed.read()
     }
 
-    /** One page as the server sends it. */
+    override suspend fun changes(calendarId: Long, since: Long): EventsResult? {
+      record("changes:$calendarId:$since")
+      var page = 0
+      val feed =
+        ChangeFeed(calendarId, TimeTreeApi.MAX_PAGES, TtLog.None) { from ->
+          beforePage?.invoke(++page)
+          pageRequests += "$calendarId:changes since=$from"
+          serveChanges(calendarId, from)
+        }
+      return feed.read(since)
+    }
+
+    /** One page of `/events`: every entry with `updated_at >= since`, oldest first. */
+    private fun serveChanges(calendarId: Long, since: Long): TtEventsPage {
+      val remaining = all(calendarId).filter { it.updatedAt >= since }.sortedBy { it.updatedAt }
+      val page = remaining.take(pageSize).let { if (changesOutOfOrder) it.reversed() else it }
+      val next = page.maxOfOrNull { it.updatedAt }?.plus(1) ?: since
+      return TtEventsPage(page.map(::toJson), chunk = remaining.size > pageSize, since = next)
+    }
+
+    /** One page of `/events/sync`, which leaves deleted events out. */
     private fun serve(calendarId: Long, since: Long?): TtEventsPage {
-      val feed = all(calendarId).sortedByDescending { it.updatedAt }
+      val feed = all(calendarId).filterNot { it.isDeactivated }.sortedByDescending { it.updatedAt }
       val remaining = if (since == null) feed else feed.filter { it.updatedAt <= since }
       val page = remaining.take(pageSize)
       val json = page.map(::toJson).toMutableList()
