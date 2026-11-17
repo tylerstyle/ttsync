@@ -56,6 +56,25 @@ data class Mapping(
 }
 
 /**
+ * `pending_delete(event_id PK, uuid, tt_cal_id, target_cal_id, deleted_at)` (schema 4, 0.2.1): a
+ * copy a sync deleted, kept until the row is gone from the provider. Google's sync adapter can
+ * restore a deleted row it hasn't uploaded yet (device test 0.2.1); the next run then deletes it
+ * again (DESIGN.md section 5, step 6a).
+ */
+data class PendingDelete(
+  val eventId: Long,
+  val uuid: String,
+  val ttCalId: Long,
+  val targetCalId: Long,
+  /** When the app deleted the row, device clock. */
+  val deletedAt: Long,
+) {
+  override fun toString(): String =
+    "PendingDelete(eventId=$eventId, uuid=${uuid.take(8)}, ttCalId=$ttCalId, " +
+      "targetCalId=$targetCalId, deletedAt=$deletedAt)"
+}
+
+/**
  * `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages,
  * filter_hash)`: per TimeTree calendar.
  */
@@ -64,8 +83,8 @@ data class SyncCursor(
   /**
    * The high-water mark: the newest change (`TtEvent.changedAt`, the later of `updated_at` and
    * `deactivated_at`, TimeTree's clock) of the last FULL read (0 if it found no event), raised by
-   * every INCREMENTAL read. An INCREMENTAL run reads the changes from this minus `TimeTreeApi.FEED_OVERLAP` on
-   * (`TimeTreeClient.changes`). Null before the first FULL, or after
+   * every INCREMENTAL read. An INCREMENTAL run reads the changes from this minus
+   * `TimeTreeApi.FEED_OVERLAP` on (`TimeTreeClient.changes`). Null before the first FULL, or after
    * the upgrade from schema 1, whose `since` was the server's backwards paging cursor: forces FULL.
    * The server's `since` is never stored.
    */

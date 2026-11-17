@@ -5,6 +5,7 @@ import de.tergelius.ttsync.calendar.GoogleSyncState
 import de.tergelius.ttsync.calendar.TargetCalendar
 import de.tergelius.ttsync.calendar.TargetCheck
 import de.tergelius.ttsync.calendar.TargetUnavailableException
+import de.tergelius.ttsync.mapping.EventFilter
 import de.tergelius.ttsync.mapping.EventSpec
 import de.tergelius.ttsync.mapping.Marker
 import de.tergelius.ttsync.settings.SourceCalendar
@@ -170,6 +171,90 @@ class SyncEngineTest {
     assertTrue(h.gateway.rows.getValue(series).deleted)
     assertFalse(SERIES in h.copies())
     h.assertForeignUntouched()
+  }
+
+  // Google's sync restores a deleted copy (device test 0.2.1, step 5) ---------------------------
+
+  /** What Google's sync adapter did on the phone: the deleted row is back, unchanged and uploaded. */
+  private fun googleRestores(eventId: Long) {
+    h.gateway.rows[eventId] = h.gateway.rows.getValue(eventId).copy(deleted = false)
+  }
+
+  @Test
+  fun aCopyGoogleRestoresAfterItsDeleteIsDeletedAgainUntilItIsGone() = runTest {
+    h.sync().assertOk()
+    val a2 = idOf(A2)
+    h.client.deactivate(CAL_A, A2)
+    assertEquals(1, h.sync().assertOk().counts.deleted)
+    assertEquals(listOf(a2), h.store.pendingDeletes.all().map { it.eventId })
+
+    h.now += 60_000L
+    assertEquals(0, h.sync().assertOk().counts.writes) // still deleted = 1: nothing to do
+    googleRestores(a2)
+    h.now += 60_000L
+    val again = h.sync().assertOk()
+    assertEquals(SyncMode.INCREMENTAL, again.calendars.single().mode)
+    assertEquals(SyncCounts(deleted = 1), again.counts.copy(skipped = 0, unmanagedMarked = 0))
+    assertEquals(0, again.counts.unmanagedMarked)
+    assertTrue(h.gateway.rows.getValue(a2).deleted)
+    assertTrue(h.log.lines.any { it.endsWith("is back after its delete; deleting it again") })
+
+    h.gateway.rows.remove(a2) // Google uploaded the delete and purged the row
+    h.now += 60_000L
+    assertEquals(0, h.sync().assertOk().counts.writes)
+    assertTrue(h.store.pendingDeletes.all().isEmpty())
+    h.assertForeignUntouched()
+  }
+
+  @Test
+  fun aRestoredCopyThatIsWantedAgainIsAdoptedNotDeleted() = runTest {
+    h.sync().assertOk()
+    val a2 = idOf(A2)
+    h.setFilter(CAL_A, EventFilter(excludeTerms = listOf("lunch")))
+    assertEquals(1, h.sync().assertOk().counts.deleted) // the filter excludes A2
+    googleRestores(a2)
+    h.setFilter(CAL_A, null) // A2 is wanted again: the restored row is its copy
+    val report = h.sync().assertOk()
+    assertEquals(0, report.counts.deleted)
+    assertEquals(0, report.counts.added)
+    assertEquals(1, report.counts.adopted)
+    assertEquals(a2, idOf(A2))
+    assertTrue(h.store.pendingDeletes.all().isEmpty())
+    h.assertForeignUntouched()
+  }
+
+  @Test
+  fun aRestoredCopyOfAPausedCalendarIsLeftAlone() = runTest {
+    h.selectB()
+    h.sync().assertOk()
+    val b1 = idOf(B1)
+    h.client.deactivate(CAL_B, B1)
+    assertEquals(1, h.sync().assertOk().counts.deleted)
+    googleRestores(b1)
+    h.client.calendars.removeAll { it.id == CAL_B } // access lost: B pauses
+    val report = h.sync().assertOk()
+    assertEquals(0, report.counts.deleted)
+    assertFalse(h.gateway.rows.getValue(b1).deleted)
+    assertEquals(listOf(b1), h.store.pendingDeletes.all().map { it.eventId }) // kept for later
+  }
+
+  @Test
+  fun aWatchedDeleteIsForgottenAfterThirtyDaysAndByTheRemovals() = runTest {
+    h.sync().assertOk()
+    val a2 = idOf(A2)
+    h.client.deactivate(CAL_A, A2)
+    h.sync().assertOk()
+    googleRestores(a2)
+    h.now += DefaultSyncEngine.PENDING_DELETE_MAX_AGE_MILLIS
+    h.sync().assertOk()
+    assertTrue(h.store.pendingDeletes.all().isEmpty())
+    assertFalse(h.gateway.rows.getValue(a2).deleted) // too old to be sure: left alone
+
+    h.client.deactivate(CAL_A, A3)
+    h.sync().assertOk()
+    assertEquals(1, h.store.pendingDeletes.all().size)
+    h.engine.removeAllCopies(h.target, stopSyncing = false)
+    assertTrue(h.store.pendingDeletes.all().isEmpty())
   }
 
   @Test

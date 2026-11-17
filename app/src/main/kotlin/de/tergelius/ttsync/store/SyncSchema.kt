@@ -12,14 +12,26 @@ package de.tergelius.ttsync.store
  * update [CREATE] so a fresh install ends up with the same tables.
  */
 object SyncSchema {
-  const val VERSION = 3
+  const val VERSION = 4
 
   const val SNAPSHOT = "snapshot"
   const val MAPPING = "mapping"
   const val CURSOR = "cursor"
   const val META = "meta"
+  const val PENDING_DELETE = "pending_delete"
 
-  val TABLES: List<String> = listOf(SNAPSHOT, MAPPING, CURSOR, META)
+  val TABLES: List<String> = listOf(SNAPSHOT, MAPPING, CURSOR, META, PENDING_DELETE)
+
+  private val CREATE_PENDING_DELETE =
+    """
+    CREATE TABLE $PENDING_DELETE (
+      event_id INTEGER NOT NULL PRIMARY KEY,
+      uuid TEXT NOT NULL,
+      tt_cal_id INTEGER NOT NULL,
+      target_cal_id INTEGER NOT NULL,
+      deleted_at INTEGER NOT NULL
+    )
+    """
 
   /** The schema of [VERSION]. */
   val CREATE: List<String> =
@@ -58,6 +70,7 @@ object SyncSchema {
       )
       """,
       "CREATE TABLE $META (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
+      CREATE_PENDING_DELETE,
     )
 
   /**
@@ -96,6 +109,9 @@ object SyncSchema {
       // successful run applied. Null means no filter, which is what every 0.1.x cursor had, so the
       // upgrade forces no FULL.
       2 to listOf("ALTER TABLE $CURSOR ADD COLUMN filter_hash TEXT"),
+      // 3 → 4 (0.2.1): `pending_delete`, the copies a sync deleted until their row is gone, so a
+      // row that Google's sync adapter restores is deleted again. Empty after the upgrade.
+      3 to listOf(CREATE_PENDING_DELETE),
     )
 
   fun create(sql: SqlConnection) {

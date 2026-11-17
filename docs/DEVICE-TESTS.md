@@ -3,7 +3,7 @@
 Results of the device checklist in [DESIGN.md](DESIGN.md) section 10. How to run such tests:
 [DEVELOPMENT.md](DEVELOPMENT.md#testing-on-a-device).
 
-Six runs on 2026-11-12, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
+Runs 1–6 on 2026-11-12 and run 7 on 2026-11-17, all on a OnePlus 8 Pro (IN2023) with LineageOS 24.0 (Android 17, SDK 37),
 driven over adb by a device-test agent (Claude Code). The user signed in on the phone; nothing was
 dumped or screenshotted while a login screen was open. Source: TimeTree test calendar with simple
 timed events, "TT test weekly" (weekly series with one deleted and one moved occurrence),
@@ -11,7 +11,7 @@ timed events, "TT test weekly" (weekly series with one deleted and one moved occ
 Google calendar, which already held 7 events of its own.
 
 **Safety invariant held in every run:** the target's 7 own events were hashed before the run and
-compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 each in runs 5 and 6): never
+compared at every checkpoint (8 in run 1, 3 each in runs 2 and 3, 5 in run 4, 4 each in runs 5, 6 and 7): never
 changed. After each run the target held
 only those 7 events again.
 
@@ -138,6 +138,32 @@ all events copied, then updated through Obtainium to the published 0.2.0.
 | Database schema 3 | Not checked: a release build can't be read with `run-as` |
 | TalkBack | Not run: starting TalkBack opened a system permission prompt that couldn't be answered safely over adb |
 
+## Run 7: 0.2.1 deletions through the change list, debug build `b083792`
+
+A user reported that events deleted in TimeTree stayed in Google. First, a read-only probe with the
+debug action `PROBE_EVENTS` compared TimeTree's two event lists on the phone (DESIGN.md section 3):
+`/events/sync` drops a deleted event without a trace, while `/calendar/{id}/events` keeps it as a
+tombstone, oldest change first, with a forward `since`. Run 7 then tested 0.2.1, whose INCREMENTAL
+runs read that change list. Fresh install, all events of the test calendar copied; every step deleted
+something in TimeTree and then tapped "Sync now" (one step used the debug `SYNC_NOW`).
+
+| Area | Result |
+|---|---|
+| First run (setup, forced FULL): one copy per live in-window event | Pass |
+| New events "Probe A", "Probe B" and a weekly "Probe series" whose 3rd date was moved: INCREMENTAL, Added 4 (the moved date as its own copy, an EXDATE on the series copy) | Pass |
+| "Probe A" deleted: INCREMENTAL, Deleted 1; its tombstone in the change list; the copy purged by Google, every other row byte-identical | Pass |
+| One plain date of the series deleted: Updated 1 (the series copy got the EXDATE), Deleted 0; no instance left on that date | Pass |
+| The moved date deleted: INCREMENTAL, Deleted 1. TimeTree reports it as its own tombstone (`recurring_uuid` set); the series itself doesn't change | Pass for the app; **Fail (D1)**: Google's sync restored the deleted row |
+| The whole series deleted: Deleted 1 | Pass; the restored moved date stayed (D1) |
+| "Probe B" deleted, debug `SYNC_NOW`: Deleted 1 | Pass |
+| Full resync: FULL, Added 0 · Updated 0 · Deleted 0 | Pass; the restored copy was counted as unmanaged and stayed (D1) |
+| "Sync now" without changes: one change-list request, nothing written | Pass |
+| Remove all copies: 10 deleted (9 plus the restored one), all purged | Pass |
+
+Every INCREMENTAL run asked the change list from the high-water mark minus 2 min; events read again
+in that overlap wrote nothing. A FULL sets the mark back to the newest live event (the live feed has
+no tombstones), so the next INCREMENTAL reads the recent tombstones once more, which is harmless.
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -152,6 +178,7 @@ all events copied, then updated through Obtainium to the published 0.2.0.
 | L2 | Low | The swatch of a "Midnight black" label was nearly invisible in the dark theme. | 0.2.0 fix round: every swatch has a 1 dp outline. Verified in run 6. |
 | L3 | Low | Extra space under the "Events: …" line on Sources. | 0.2.0 fix round: the line sits right under its calendar's name, like a subtitle. Verified in run 6. |
 | L4 | Low | German relative times in parentheses started with a capital: "(Vor 1 Minute)". | 0.2.0 fix round: the first letter is lower case, locale-aware: "(vor 1 Minute)"; in English "(5 minutes ago)" is unchanged and "(In 40 minutes)" becomes "(in 40 minutes)". Verified in run 6. |
+| D1 | High | Google's sync adapter restored a copy the app had just deleted (`deleted = 1`, not uploaded yet) to its unchanged server version, right after a feed sync of the target calendar. The app had dropped the mapping with the delete, so it never looked at the row again: the deleted TimeTree date stayed in Google, and a Full resync counted it as unmanaged. Seen once, in run 7; 0.2.0 had the same gap. | 0.2.1: every deleted copy is watched (`pending_delete`, schema 4) until its row is gone, and deleted again if it comes back (DESIGN.md section 5, step 6a). |
 | L5 | Low | Android 13+'s Settings → App languages didn't offer the app: no locale config. | 0.2.0 fix round: AGP generates one for English and German. Verified in run 6. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in

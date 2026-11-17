@@ -155,6 +155,48 @@ class SqlSyncDatabaseTest {
   }
 
   @Test
+  fun pendingDeletesRoundTripAndGoWithTheirCalendarAndWithWipe() {
+    val a = PendingDelete(1001, "u1", 7, 15, 99)
+    val b = PendingDelete(1002, "u2", 8, 15, 100)
+    db.pendingDeletes.upsert(listOf(b, a))
+    assertEquals(listOf(a, b), db.pendingDeletes.all())
+    db.pendingDeletes.upsert(listOf(a.copy(deletedAt = 120))) // by _ID
+    assertEquals(120L, db.pendingDeletes.all().first().deletedAt)
+    db.pendingDeletes.deleteCalendar(8)
+    assertEquals(listOf(1001L), db.pendingDeletes.all().map { it.eventId })
+    db.pendingDeletes.upsert(listOf(b))
+    db.pendingDeletes.delete(listOf(1001L))
+    assertEquals(listOf(b), db.pendingDeletes.all())
+    db.wipe()
+    assertTrue(db.pendingDeletes.all().isEmpty())
+  }
+
+  @Test
+  fun upgradeFromVersion3AddsAnEmptyPendingDeleteTable() {
+    val old = JdbcSqlConnection.inMemory()
+    try {
+      old.transaction {
+        V1_CREATE.forEach { old.execute(it) }
+        SyncSchema.MIGRATIONS.getValue(1).forEach { old.execute(it.trimIndent()) }
+        SyncSchema.MIGRATIONS.getValue(2).forEach { old.execute(it.trimIndent()) }
+        old.execute(
+          "INSERT INTO mapping (uuid, tt_cal_id, target_cal_id, event_id, spec_hash, end_at, written_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+          listOf("u1", 7L, 15L, 1001L, "h", 5L, 99L),
+        )
+      }
+      SyncSchema.upgrade(old, 3, SyncSchema.VERSION)
+      val upgraded = SqlSyncDatabase(old)
+      assertEquals(Mapping("u1", 7, 15, 1001, "h", 5, writtenAt = 99), upgraded.mappings.get("u1"))
+      assertTrue(upgraded.pendingDeletes.all().isEmpty())
+      upgraded.pendingDeletes.upsert(listOf(PendingDelete(1001, "u1", 7, 15, 99)))
+      assertEquals(1, upgraded.pendingDeletes.all().size)
+    } finally {
+      old.close()
+    }
+  }
+
+  @Test
   fun everyVersionHasAMigrationStep() {
     for (version in 1 until SyncSchema.VERSION) {
       assertTrue("missing migration from $version", SyncSchema.MIGRATIONS.containsKey(version))

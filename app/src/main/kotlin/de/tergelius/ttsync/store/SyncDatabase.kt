@@ -16,6 +16,7 @@ interface SyncDatabase {
   val mappings: MappingStore
   val cursors: CursorStore
   val meta: MetaStore
+  val pendingDeletes: PendingDeleteStore
 
   /**
    * Runs [block] in one transaction: all its writes commit together, or none do if it throws. The
@@ -26,6 +27,20 @@ interface SyncDatabase {
 
   /** Deletes every row of every table (sign-out). */
   fun wipe()
+}
+
+/** Copies a sync deleted, by `_ID`, until their row is gone ([PendingDelete]). */
+interface PendingDeleteStore {
+  fun all(): List<PendingDelete>
+
+  /** Inserts or replaces by `_ID`. */
+  fun upsert(entries: Collection<PendingDelete>)
+
+  fun delete(eventIds: Collection<Long>)
+
+  fun deleteCalendar(ttCalId: Long)
+
+  fun clear()
 }
 
 /** Snapshots per TimeTree event uuid. */

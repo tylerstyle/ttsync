@@ -23,6 +23,7 @@ import de.tergelius.ttsync.settings.StatusRepository
 import de.tergelius.ttsync.store.CalendarState
 import de.tergelius.ttsync.store.Mapping
 import de.tergelius.ttsync.store.MetaKeys
+import de.tergelius.ttsync.store.PendingDelete
 import de.tergelius.ttsync.store.Snapshot
 import de.tergelius.ttsync.store.SyncCursor
 import de.tergelius.ttsync.store.SyncDatabase
@@ -40,6 +41,7 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.sync.Mutex
@@ -179,7 +181,7 @@ class DefaultSyncEngine(
         }
         // Only after the deletes went through: a failed removal keeps everything, so syncing goes
         // on and the user can retry (phase 5 review, SHOULD-FIX-1).
-        if (stopSyncing) stopSyncing() else db.mappings.clear()
+        if (stopSyncing) stopSyncing() else db.transaction { db.mappings.clear(); db.pendingDeletes.clear() }
       }
     }
 
@@ -204,6 +206,7 @@ class DefaultSyncEngine(
           for (id in ttCalIds) {
             db.snapshots.deleteCalendar(id)
             db.mappings.deleteCalendar(id)
+            db.pendingDeletes.deleteCalendar(id)
             db.cursors.delete(id)
           }
         }
@@ -281,6 +284,7 @@ class DefaultSyncEngine(
         db.cursors.delete(id)
       }
       db.mappings.clear()
+      db.pendingDeletes.clear()
     }
     log.i("syncing stopped: ${current.sources.size} sources cleared")
   }
@@ -416,6 +420,12 @@ class DefaultSyncEngine(
      */
     LEFTOVER,
 
+    /**
+     * A row an earlier run deleted that is back (`deleted = 0`, still ours): Google's sync adapter
+     * restored it before uploading the delete (device test 0.2.1). Verified delete again.
+     */
+    REDELETE,
+
     /** Mapped row with a different hash. */
     UPDATE,
 
@@ -500,6 +510,7 @@ class DefaultSyncEngine(
     var affected: Set<String> = emptySet()
     val duplicates = mutableListOf<Planned>()
     val leftovers = mutableListOf<Planned>()
+    val returned = mutableListOf<Planned>()
     val counter = Counter()
 
     val desired: Map<String, Desired>
@@ -665,6 +676,9 @@ class DefaultSyncEngine(
         }
       }
       active.forEach { it.affected = affected(it) }
+
+      // 6a. Copies an earlier run deleted that are back (Google's sync adapter restored them).
+      recheckDeleted(active)
 
       // 6. Adoption scan, before any write (step 6 builds the index the diff uses).
       val needsAdoption = active.any { w -> w.affected.any { w.desired[it] is Desired.Write && mappingFor(it) == null } }
@@ -880,6 +894,50 @@ class DefaultSyncEngine(
       mappings[uuid]?.takeIf { it.targetCalId == target.calendarId }
 
     /**
+     * Step 6a. Rows that earlier runs deleted ([PendingDelete]) are checked by `_ID`:
+     * - gone (Google purged it), in another calendar, or no longer ours: forgotten, never touched;
+     * - still `deleted = 1`: kept, Google hasn't uploaded the delete yet;
+     * - back (`deleted = 0` and ours): Google's sync adapter restored it before uploading the
+     *   delete (device test 0.2.1). Deleted again ([Kind.REDELETE]), unless its uuid is wanted now
+     *   ([activeWrites]) or a mapping points at the row: then it is forgotten and the diff or the
+     *   adoption scan decides.
+     *
+     * Only entries of the current target and of active calendars are checked (a paused calendar's
+     * rows are never touched); older than [PENDING_DELETE_MAX_AGE_MILLIS], or for another target,
+     * they are forgotten.
+     */
+    private suspend fun recheckDeleted(active: List<CalendarWork>) {
+      val entries = db.pendingDeletes.all()
+      if (entries.isEmpty()) return
+      val byId = active.associateBy { it.id }
+      val (current, dropped) =
+        entries.partition { it.targetCalId == target.calendarId && startedAt - it.deletedAt < PENDING_DELETE_MAX_AGE_MILLIS }
+      val due = current.filter { it.ttCalId in byId }
+      val forget = dropped.mapTo(mutableListOf()) { it.eventId }
+      if (due.isNotEmpty()) {
+        val checks = calendarCall { gateway.checkRows(target, due.associate { it.eventId to it.uuid }) }
+        val mapped = mappings.values.mapTo(HashSet()) { it.eventId }
+        for (entry in due) {
+          when (checks[entry.eventId] ?: RowCheck.MISSING) {
+            RowCheck.DELETED -> Unit
+            RowCheck.OURS ->
+              if (entry.uuid in activeWrites || entry.eventId in mapped) {
+                forget += entry.eventId
+              } else {
+                log.w("copy of ${TtLog.short(entry.uuid)} is back after its delete; deleting it again")
+                byId.getValue(entry.ttCalId).returned +=
+                  Planned(CalendarOp.Delete(entry.eventId, entry.uuid), Kind.REDELETE)
+                claimed += entry.eventId
+              }
+            else -> forget += entry.eventId
+          }
+        }
+      }
+      db.pendingDeletes.delete(forget)
+      log.d("deleted copies: watched=${entries.size - forget.size} forgotten=${forget.size}")
+    }
+
+    /**
      * Step 6. Builds the marker index. Only adopts (through the diff) and, with [withDuplicates],
      * plans verified deletes of extra rows of uuids that are live and active, and of unmapped
      * leftovers: rows of live, in-window events that their active calendar's filter excludes
@@ -923,7 +981,9 @@ class DefaultSyncEngine(
       fun managedByDiff(row: MarkedRow): Boolean =
         mappingFor(row.uuid)?.let { it.eventId == row.eventId && it.endAt >= windowStart && it.ttCalId in active } == true
       unmanagedMarked =
-        rows.count { it.uuid !in activeWrites && it.eventId !in leftoverIds && !managedByDiff(it) }
+        rows.count {
+          it.uuid !in activeWrites && it.eventId !in leftoverIds && it.eventId !in claimed && !managedByDiff(it)
+        }
       log.i(
         "adoption scan: marked=${rows.size} unmanaged=$unmanagedMarked duplicates=$duplicates " +
           "leftovers=${leftoverIds.size}"
@@ -943,7 +1003,7 @@ class DefaultSyncEngine(
 
     /** Step 5, the only place a sync deletes. */
     private suspend fun plan(work: CalendarWork): List<Planned> {
-      val ops = ArrayList<Planned>(work.duplicates + work.leftovers)
+      val ops = ArrayList<Planned>(work.duplicates + work.leftovers + work.returned)
       val planned = HashSet<String>()
       val verify = LinkedHashMap<Long, String>()
       val endAtFixes = mutableListOf<Mapping>()
@@ -1032,6 +1092,7 @@ class DefaultSyncEngine(
     ) {
       val upserts = mutableListOf<Mapping>()
       val removed = mutableListOf<String>()
+      val deleted = mutableListOf<PendingDelete>()
       fun forget(p: Planned) {
         if (mappings[p.uuid]?.eventId == p.eventId) removed += p.uuid
       }
@@ -1052,6 +1113,11 @@ class DefaultSyncEngine(
           }
           OpResult.Deleted -> {
             if (p.kind == Kind.DELETE) forget(p)
+            // Watched until the row is gone (step 6a); a duplicate needs no watch, since the scan
+            // finds an extra row of a live uuid again.
+            if (p.kind != Kind.DUPLICATE) {
+              deleted += PendingDelete(p.eventId!!, p.uuid, work.id, target.calendarId, nowMillis())
+            }
             work.counter.deleted++
           }
           is OpResult.Rejected -> {
@@ -1068,20 +1134,22 @@ class DefaultSyncEngine(
                 forget(p)
               }
               Kind.DUPLICATE,
-              Kind.LEFTOVER -> if (!result.check.isGone()) work.counter.rejected++
+              Kind.LEFTOVER,
+              Kind.REDELETE -> if (!result.check.isGone()) work.counter.rejected++
               Kind.INSERT -> error("an insert cannot be refused")
             }
           }
         }
       }
-      record(upserts, removed)
+      record(upserts, removed, deleted)
     }
 
-    private fun record(upserts: List<Mapping>, removed: List<String>) {
-      if (upserts.isEmpty() && removed.isEmpty()) return
+    private fun record(upserts: List<Mapping>, removed: List<String>, deleted: List<PendingDelete> = emptyList()) {
+      if (upserts.isEmpty() && removed.isEmpty() && deleted.isEmpty()) return
       db.transaction {
         db.mappings.delete(removed)
         db.mappings.upsert(upserts)
+        db.pendingDeletes.upsert(deleted)
       }
       removed.forEach { mappings.remove(it) }
       upserts.forEach { mappings[it.uuid] = it }
@@ -1167,6 +1235,9 @@ class DefaultSyncEngine(
 
     /** Runs between FULLs are INCREMENTAL; a FULL comes at least this often. */
     val FULL_INTERVAL_MILLIS: Long = 6.hours.inWholeMilliseconds
+
+    /** How long a deleted copy is watched for a restore by Google's sync (step 6a). */
+    val PENDING_DELETE_MAX_AGE_MILLIS: Long = 30.days.inWholeMilliseconds
 
     /** A copy still `dirty` this long after the app wrote it counts as not uploaded. */
     val UPLOAD_GRACE_MILLIS: Long = 30.minutes.inWholeMilliseconds

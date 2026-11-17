@@ -43,6 +43,9 @@ class SyncDb(context: Context) :
   override val meta: MetaStore
     get() = stores.meta
 
+  override val pendingDeletes: PendingDeleteStore
+    get() = stores.pendingDeletes
+
   override fun <T> transaction(block: () -> T): T = stores.transaction(block)
 
   override fun wipe() {

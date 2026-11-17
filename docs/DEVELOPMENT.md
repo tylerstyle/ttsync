@@ -82,7 +82,7 @@ Packages under `de.tergelius.ttsync`:
 |---|---|---|
 | `timetree` | Read-only client for TimeTree's web API: sign-in, calendars (with their labels and members), labels, the live event feed and the change list; errors; request pacing; lenient decoding of the fields only filters use | `TimeTreeClient`, `OkHttpTimeTreeClient`, `EventFeed`, `ChangeFeed`, `FeedEntries`, `Dtos`, `LenientSerializers`, `TtError`, `RequestPacer`, `RawResponseSink` |
 | `mapping` | Pure functions: TimeTree event → desired calendar row (`EventSpec`), time zones, all-day dates, recurrences, edited occurrences, the marker, the content hash; event filters and label names (0.2.0) | `EventMapper`, `EventSpec`, `RecurrenceNormalizer`, `OverrideResolver`, `TimeRules`, `Marker`, `SpecHash`, `EventFilter`, `LabelNames` (`LabelColor`) |
-| `store` | The app's own sync state in SQLite (framework, no Room): `snapshot`, `mapping`, `cursor`, `meta` | `SyncDatabase`, `SyncDb`, `SqlSyncDatabase`, `SyncSchema`, `SqlConnection` |
+| `store` | The app's own sync state in SQLite (framework, no Room): `snapshot`, `mapping`, `cursor`, `meta`, `pending_delete` | `SyncDatabase`, `SyncDb`, `SqlSyncDatabase`, `SyncSchema`, `SqlConnection` |
 | `calendar` | The only code that touches `CalendarContract`; enforces the marker rules | `CalendarGateway`, `ProviderCalendarGateway`, `GatewayRules` |
 | `sync` | The sync algorithm, the report, WorkManager scheduling and the worker, notifications | `SyncEngine`, `SyncReport`, `SyncScheduler`, `WorkManagerSyncScheduler`, `SyncWorker`, `SyncNotifier` |
 | `settings` | User choices (the selected calendars with their filters) and status in DataStore, as JSON through a pure codec; encrypted credentials (Android Keystore, AES-256-GCM); the TimeTree session | `SettingsRepository`, `StatusRepository`, `AndroidStores`, `StoreCodec`, `CredentialStore`, `KeystoreCredentialStore`, `StoredSessionStore` |
@@ -134,9 +134,10 @@ Keep running → Status. `Navigation.kt` holds the Navigation 3 back stack. View
 `AppViewModelFactory` (manual DI from `AppGraph`) and call `UserActions` for multi-step actions such as
 sign-out or a target change, so every screen runs those steps in the same order.
 
-**Storage.** `SyncDb` (SQLite, schema version 3) holds snapshots, mappings, cursors and meta
-values. Schema 3 (0.2.0) added `cursor.filter_hash`; the upgrade from 2 keeps every row and forces
-no FULL run. A downgrade recreates the tables, so the next run adopts the copies again. DataStore holds settings and status. Credentials are encrypted into
+**Storage.** `SyncDb` (SQLite, schema version 4) holds snapshots, mappings, cursors, meta values
+and the deleted copies it still watches. Schema 3 (0.2.0) added `cursor.filter_hash`; the upgrade
+from 2 keeps every row and forces no FULL run. Schema 4 (0.2.1) added `pending_delete` (DESIGN.md
+section 5, step 6a). A downgrade recreates the tables, so the next run adopts the copies again. DataStore holds settings and status. Credentials are encrypted into
 `noBackupFilesDir/credentials.enc`. Backups are off for the whole app.
 
 ## Tech stack

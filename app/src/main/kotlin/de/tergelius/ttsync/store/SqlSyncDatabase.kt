@@ -1,7 +1,7 @@
 package de.tergelius.ttsync.store
 
 /**
- * The four stores on any [SqlConnection] whose schema is [SyncSchema]. [SyncDb] uses it on
+ * The stores on any [SqlConnection] whose schema is [SyncSchema]. [SyncDb] uses it on
  * framework SQLite; JVM tests use it on JDBC.
  */
 class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
@@ -10,6 +10,7 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
   override val mappings: MappingStore = Mappings()
   override val cursors: CursorStore = Cursors()
   override val meta: MetaStore = Meta()
+  override val pendingDeletes: PendingDeleteStore = PendingDeletes()
 
   override fun <T> transaction(block: () -> T): T = sql.transaction(block)
 
@@ -120,6 +121,51 @@ class SqlSyncDatabase(private val sql: SqlConnection) : SyncDatabase {
 
     override fun clear() {
       sql.execute("DELETE FROM ${SyncSchema.MAPPING}")
+    }
+  }
+
+  private inner class PendingDeletes : PendingDeleteStore {
+    private val columns = "event_id, uuid, tt_cal_id, target_cal_id, deleted_at"
+
+    private fun read(row: SqlRow) =
+      PendingDelete(
+        eventId = row.long(0),
+        uuid = row.string(1),
+        ttCalId = row.long(2),
+        targetCalId = row.long(3),
+        deletedAt = row.long(4),
+      )
+
+    override fun all(): List<PendingDelete> =
+      sql.query("SELECT $columns FROM ${SyncSchema.PENDING_DELETE} ORDER BY event_id", emptyList(), ::read)
+
+    override fun upsert(entries: Collection<PendingDelete>) {
+      if (entries.isEmpty()) return
+      sql.transaction {
+        for (e in entries) {
+          sql.execute(
+            "INSERT OR REPLACE INTO ${SyncSchema.PENDING_DELETE} ($columns) VALUES (?, ?, ?, ?, ?)",
+            listOf(e.eventId, e.uuid, e.ttCalId, e.targetCalId, e.deletedAt),
+          )
+        }
+      }
+    }
+
+    override fun delete(eventIds: Collection<Long>) {
+      if (eventIds.isEmpty()) return
+      sql.transaction {
+        eventIds.forEach {
+          sql.execute("DELETE FROM ${SyncSchema.PENDING_DELETE} WHERE event_id = ?", listOf(it))
+        }
+      }
+    }
+
+    override fun deleteCalendar(ttCalId: Long) {
+      sql.execute("DELETE FROM ${SyncSchema.PENDING_DELETE} WHERE tt_cal_id = ?", listOf(ttCalId))
+    }
+
+    override fun clear() {
+      sql.execute("DELETE FROM ${SyncSchema.PENDING_DELETE}")
     }
   }
 

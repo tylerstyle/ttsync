@@ -92,10 +92,12 @@ four tables don't justify annotation processing. Tink is out too (see section 6)
   (section 5, step 1).
 - `cursor(tt_cal_id PK, high_water, last_full_at, state, labels_json, last_full_pages, filter_hash)`:
   `high_water` is the calendar's high-water mark (section 3, Events); `last_full_pages` is the size of
-  its feed at the last FULL, which picks FULL or INCREMENTAL (section 5). Schema 2 replaced schema
-  1's `since`, the server's cursor, which the upgrade drops (null forces one FULL). Schema 3 (0.2.0)
-  adds `filter_hash`, the fingerprint of the filter the copies follow (null: no filter).
+  its feed at the last FULL (logged only since 0.2.1). Schema 2 replaced schema 1's `since`, the
+  server's cursor, which the upgrade drops (null forces one FULL). Schema 3 (0.2.0) adds
+  `filter_hash`, the fingerprint of the filter the copies follow (null: no filter).
 - `meta(key PK, value)`
+- `pending_delete(event_id PK, uuid, tt_cal_id, target_cal_id, deleted_at)` (schema 4, 0.2.1): copies a
+  sync deleted, watched until their row is gone (section 5, step 6a). Removals and sign-out clear it.
 
 ## 3. TimeTree client
 
@@ -402,6 +404,20 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
      re-inserts it if not.
    - Never touched: uuids not in the `Desired` map (out of window), mappings with an old `end_at`, and
      anything belonging to a paused calendar.
+6a. **Deleted copies that came back** (0.2.1, device test run 7). A verified delete only marks the row
+   `deleted = 1`; Google's sync adapter uploads the delete later, and on the phone it once restored
+   such a row (`deleted = 0`, unchanged, uploaded) before uploading the delete. Without a mapping the
+   app never looked at it again. So every delete of the diff, of a leftover and of this step is
+   recorded in `pending_delete`, and every run first checks those rows by `_ID`, before any write:
+   - gone (purged), in another calendar or no longer ours: forgotten, never touched;
+   - still `deleted = 1`: kept;
+   - back and ours: deleted again with a verified delete, unless its uuid is `Write` in an active
+     calendar or a mapping points at it (then it is forgotten, and the diff or the scan adopts it).
+
+   Only entries of the current target and of active calendars are checked; a paused calendar's rows
+   stay untouched. Entries older than 30 days, or of another target, are forgotten. Duplicates are not
+   recorded: the scan finds an extra row of a live uuid again by itself. The removal actions (Remove all
+   copies, deselect, target change) are not watched.
 6. **Adoption scan** (in FULL, after a crash, or with an empty mapping table). It runs after mapping
    and before the diff's writes, and it builds the marker index the diff uses. This step only adopts.
    Query `calendar_id=target AND deleted=0 AND description LIKE '%[ttsync:%'` and parse the last line.
@@ -638,7 +654,8 @@ Filters (0.2.0, section 4a):
 - F3 (`LabelNamesTest`, `LabelColorStringsTest`): TimeTree's 25 colours; the copy's line uses the
   name, else the English colour name; every colour has an English and a German string.
 - F4 (`StoreCodecTest`, `SqlSyncDatabaseTest`): 0.1.x settings and reports decode, and unfiltered
-  sources stay byte-identical; schema 2 → 3 keeps every row and forces no FULL.
+  sources stay byte-identical; schema 2 → 3 keeps every row and forces no FULL; schema 3 → 4 (0.2.1)
+  adds an empty `pending_delete`.
 - F5 (`SyncEngineFilterTest`): narrowing runs FULL once and deletes exactly the excluded copies;
   widening copies them again; an equivalent filter forces nothing; a failed run keeps the old hash;
   leftovers after lost mappings or a reinstall are deleted, while unknown, out-of-window and paused
@@ -832,6 +849,7 @@ calendar of more than 3 pages. The owner approved the change on 2026-11-17.
 
 | Topic | Decision | Where |
 |---|---|---|
+| Restored deletes (D1) | Device test run 7: Google's sync adapter restored a deleted copy before uploading the delete. Deleted copies are watched in `pending_delete` (schema 4) and deleted again if they come back. | 2, 5 (step 6a) |
 | Change list | INCREMENTAL reads `/calendar/{id}/events?since=` (forward, with tombstones), found with a debug probe on the phone. FULL keeps `/events/sync`. | 3, 5 |
 | Small calendars | No more FULL on every run: every calendar runs INCREMENTAL between the 6-hourly FULLs, which lowers the load. | 5 |
 | Distrust | A change list that doesn't behave as observed makes that calendar's run FULL; nothing is guessed. | 3 |
