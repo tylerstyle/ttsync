@@ -189,6 +189,14 @@ data class TtEvent(
   val isOverride: Boolean
     get() = recurringUuid != null || parentId != null
 
+  /** The uuids an override points at (`recurring_uuid` first), never its own. */
+  val parentRefs: List<String>
+    get() =
+      listOfNotNull(recurringUuid, parentId)
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && it != uuid }
+        .distinct()
+
   /**
    * When this version of the event came to be (TimeTree's clock): the later of [updatedAt] and
    * [deactivatedAt]. The sync cursor's high-water mark is the largest of these (DESIGN.md section 5).

@@ -974,6 +974,26 @@ class SyncEngineTest {
   }
 
   @Test
+  fun aDeletedDatesTombstoneStaysWhileItsSeriesLivesAndGoesWithIt() = runTest {
+    val moved = "aaaa5e5faaaa5e5faaaa5e5faaaa5e5f"
+    h.client.put(CAL_A, h.timed(moved, day = 6, title = "Weekly, moved").copy(recurringUuid = SERIES))
+    h.sync().assertOk()
+    h.client.deactivate(CAL_A, moved)
+    h.sync().assertOk()
+    h.sync(full = true).assertOk() // a complete read keeps it: the series is live
+    assertEquals(true, h.store.snapshots.get(moved)?.deactivated)
+
+    h.client.deactivate(CAL_A, SERIES)
+    assertEquals(1, h.sync().assertOk().counts.deleted) // the series copy
+    assertEquals(true, h.store.snapshots.get(moved)?.deactivated) // INCREMENTAL drops nothing
+    val full = h.sync(full = true).assertOk()
+    assertEquals(0, full.counts.writes)
+    assertNull(h.store.snapshots.get(moved)) // its series is gone: nothing needs it any more
+    assertNull(h.store.snapshots.get(SERIES))
+    h.assertForeignUntouched()
+  }
+
+  @Test
   fun anUnknownLabelIsFetchedOnce() = runTest {
     h.sync().assertOk()
     h.client.labels[CAL_A] = listOf(TtLabel(5, "Sports"))

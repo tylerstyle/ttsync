@@ -149,7 +149,7 @@ class DefaultEventMapper : EventMapper {
     val parentOf = LinkedHashMap<String, String>()
     val children = HashMap<String, MutableList<TtEvent>>()
     for (event in events.values) {
-      val parent = parentRefs(event).firstOrNull { it in events } ?: continue
+      val parent = event.parentRefs.firstOrNull { it in events } ?: continue
       parentOf[event.uuid] = parent
       children.getOrPut(parent) { mutableListOf() } += event
     }
@@ -257,7 +257,7 @@ class DefaultEventMapper : EventMapper {
       if (event.allDay) null
       else TimeRules.zoneOrNull(event.endTimezone)?.id?.takeIf { it != timezone }
     val recurrence =
-      if (parentRefs(event).isNotEmpty()) null
+      if (event.parentRefs.isNotEmpty()) null
       else normalizer.normalize(event.recurrences, event.allDay, zone, dtStart)
     return Shape(event.allDay, dtStart, dtEnd, duration, timezone, endTimezone, recurrence)
   }
@@ -297,13 +297,6 @@ class DefaultEventMapper : EventMapper {
     val LINE_BREAKS = Regex("""\s*[\r\n]+\s*""")
 
     fun oneLine(text: String): String? = text.trim().replace(LINE_BREAKS, " ").ifEmpty { null }
-
-    /** The uuids an override points at (`recurring_uuid` first), never its own. */
-    fun parentRefs(event: TtEvent): List<String> =
-      listOfNotNull(event.recurringUuid, event.parentId)
-        .map { it.trim() }
-        .filter { it.isNotEmpty() && it != event.uuid }
-        .distinct()
 
     /** One event per uuid, the newest by `updated_at` (deactivated wins a tie), sorted by uuid. */
     fun newestByUuid(events: Collection<TtEvent>): SortedMap<String, TtEvent> {

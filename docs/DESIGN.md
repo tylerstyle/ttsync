@@ -385,7 +385,8 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
 3. **Fetch.** Call `GET /calendars` and mark lost calendars. Fetch each active calendar's events
    (section 3): INCREMENTAL reads the change list from its high-water mark on, FULL reads the whole
    live feed. No high-water mark means FULL. Store live events as snapshots, keep tombstones of
-   occurrences that have a `recurring_uuid`, and drop all other deleted or skipped events. A deletion
+   occurrences that have a `recurring_uuid` while their series exists (a complete read drops the
+   others), and drop all other deleted or skipped events. A deletion
    arrives as a tombstone in INCREMENTAL (`Absent`), and as an absence in FULL (settled by the device
    probe of 2026-11-17).
 4. **Affected events.** INCREMENTAL: the changed uuids and the parents of changed overrides and
@@ -843,6 +844,6 @@ From the code reviews ([reviews/0.2.1-agy.md](reviews/0.2.1-agy.md), [reviews/0.
 |---|---|---|
 | A 403/404 or an unreadable page from the change list paused the calendar or failed the run | Fixed: the client treats it like an untrustworthy list, and the FULL read decides about lost access. | 3, C9, engine tests |
 | An empty calendar asked for a negative `since` | Fixed: `since` is at least 0. | 3 |
-| Tombstones of deleted moved dates stay in `snapshot` for good | Accepted: one small row each, harmless. They now arrive through the change list; 0.2.0 never stored any. | 2 |
+| Tombstones of deleted moved dates stay in `snapshot` for good | Fixed for deleted series: a complete read drops a stored tombstone whose series is gone. While the series lives, its tombstones stay, since the override rules may need them to keep that date out of the series copy (one small row per deleted moved date). | 5 (step 3) |
 | Stale small-calendar text in sections 1, 3, 7, 9, comments and DEVICE-TESTS; "repairs copies changed in Google" | Fixed. | — |
 | No test for a deleted moved date through the change list | Added. | 10 |

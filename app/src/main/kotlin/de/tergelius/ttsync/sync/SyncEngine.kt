@@ -483,10 +483,18 @@ class DefaultSyncEngine(
      */
     var provesAbsence = false
 
-    /** Stored snapshots the complete fetch does not replace: tombstones, and skipped uuids. */
+    /**
+     * Stored snapshots the complete fetch does not replace: skipped uuids, and tombstones of
+     * occurrences whose series is still there (live, or unreadable). A tombstone whose series is
+     * gone serves no override rule any more, so it is dropped (review 0.2.1, NIT-2).
+     */
     fun storedToKeep(): List<Snapshot> =
       stored.filter {
-        it.uuid !in fetchedUuids && it.uuid in storedEvents && (it.deactivated || it.uuid in skippedUuids)
+        val event = storedEvents[it.uuid]
+        it.uuid !in fetchedUuids &&
+          event != null &&
+          (it.uuid in skippedUuids ||
+            it.deactivated && event.parentRefs.any { parent -> parent in fetchedUuids || parent in skippedUuids })
       }
     var result: MappingResult = MappingResult(emptyMap(), emptyMap())
     var affected: Set<String> = emptySet()
