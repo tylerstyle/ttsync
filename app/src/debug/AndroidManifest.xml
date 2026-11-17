@@ -12,6 +12,7 @@
                 <action android:name="de.tergelius.ttsync.debug.SYNC_NOW" />
                 <action android:name="de.tergelius.ttsync.debug.FULL_SYNC" />
                 <action android:name="de.tergelius.ttsync.debug.DROP_MAPPINGS" />
+                <action android:name="de.tergelius.ttsync.debug.PROBE_EVENTS" />
             </intent-filter>
         </receiver>
     </application>

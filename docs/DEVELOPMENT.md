@@ -220,6 +220,17 @@ adb shell am broadcast -a de.tergelius.ttsync.debug.DROP_MAPPINGS -n $R         
 adb logcat -s TtSync
 ```
 
+`PROBE_EVENTS` reads raw pages of one calendar's event list with the stored session and dumps them
+to `files/debug/raw/<run id>-probe/`. It needs a sign-in only, not a finished setup, and writes
+nothing to any calendar. Don't send it while a run is going: it switches the dump folder.
+
+```sh
+P="am broadcast -a de.tergelius.ttsync.debug.PROBE_EVENTS -n $R --el calendar <id>"
+adb shell $P                                # /calendar/<id>/events from its top, up to 10 pages
+adb shell $P --es list sync                 # the feed syncs read, /calendar/<id>/events/sync
+adb shell $P --el since 0 --ei pages 40     # from a given `since`, at most 40 pages
+```
+
 **Raw API dumps.** Every data response of a run (never the sign-in, never headers) is written to
 `files/debug/raw/<run>/<NNN>_<name>.json` in the app's private storage; the last 5 runs are kept, and
 sign-out deletes them. Read them with `run-as`:

@@ -172,6 +172,54 @@ class OkHttpTimeTreeClientTest {
     assertEquals(listOf("calendar_7000001_events_top"), sink.names)
   }
 
+  // Debug probe (DebugReceiver PROBE_EVENTS) ---------------------------------------------------
+
+  @Test
+  fun probeReadsTheOtherListPageByPageAndDumpsEachPage() = runTest {
+    server.enqueue(response(page(true, 500, ev("a", 40))))
+    server.enqueue(response(page(true, 300, ev("b", 30))))
+    server.enqueue(response(page(false, 100, ev("c", 20), ev("d", 10))))
+
+    val pages = client.probeEvents(7, ProbeList.EVENTS, since = 0, maxPages = 10, runId = "probe-1")
+
+    assertEquals(
+      listOf(
+        "/api/v1/calendar/7/events?since=0",
+        "/api/v1/calendar/7/events?since=500",
+        "/api/v1/calendar/7/events?since=300",
+      ),
+      List(3) { take().target },
+    )
+    assertEquals(listOf(1, 1, 2), pages.map { it.events })
+    assertEquals(listOf(true, true, false), pages.map { it.chunk })
+    assertEquals(listOf(500L, 300L, 100L), pages.map { it.since })
+    assertEquals(listOf("chunk", "events", "since"), pages.first().keys)
+    assertEquals("probe-1", sink.runs.last())
+    assertEquals(
+      listOf("calendar_7_list_since_0", "calendar_7_list_since_500", "calendar_7_list_since_300"),
+      sink.names,
+    )
+  }
+
+  @Test
+  fun probeStopsAtARepeatedCursorAtMaxPagesAndOnAnUnknownShape() = runTest {
+    server.enqueue(response(page(true, 500, ev("a", 40))))
+    server.enqueue(response(page(true, 500, ev("a", 40)))) // the cursor repeats
+    assertEquals(2, client.probeEvents(7, ProbeList.SYNC, since = null, maxPages = 10, runId = "p2").size)
+    assertEquals("/api/v1/calendar/7/events/sync", take().target)
+    assertEquals("/api/v1/calendar/7/events/sync?since=500", take().target)
+
+    server.enqueue(response(page(true, 400, ev("a", 40))))
+    assertEquals(1, client.probeEvents(7, ProbeList.EVENTS, since = null, maxPages = 1, runId = "p3").size)
+    assertEquals("/api/v1/calendar/7/events", take().target)
+
+    server.enqueue(response("""{"items":[]}"""))
+    val odd = client.probeEvents(7, ProbeList.EVENTS, since = null, maxPages = 10, runId = "p4")
+    assertEquals(listOf(ProbePage(null, null, null, listOf("items"))), odd)
+    take()
+    assertEquals(listOf("p2", "p3", "p4"), sink.runs.takeLast(3))
+  }
+
   @Test
   fun c3_fullFollowsSinceBackwardsThenRereadsTheTop() = runTest {
     server.enqueue(response(feedPage(true, 30, ev("a", 40), ev("b", 30))))

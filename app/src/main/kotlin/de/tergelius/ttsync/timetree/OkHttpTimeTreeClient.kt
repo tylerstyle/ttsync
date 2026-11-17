@@ -11,9 +11,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Cookie
@@ -115,6 +118,42 @@ class OkHttpTimeTreeClient(
         }
       }
     return feed.read(stopAt)
+  }
+
+  /**
+   * Debug probe, never used by a sync (`DebugReceiver` action `PROBE_EVENTS`, debug builds only).
+   * Reads raw pages of one calendar's event [list]: from [since] (null: the list's top), then each
+   * page's `since` while `chunk` is true and the cursor is new, at most [maxPages] pages. Each page
+   * goes to the raw sink in its own dump folder [runId]. It has its own login budget and decodes
+   * only the page's frame ([ProbePage]), so an unexpected shape is still dumped and reported.
+   *
+   * Don't run it during a sync: it switches the raw sink to [runId].
+   */
+  suspend fun probeEvents(
+    calendarId: Long,
+    list: ProbeList,
+    since: Long?,
+    maxPages: Int,
+    runId: String,
+  ): List<ProbePage> {
+    try {
+      rawSink.beginRun(runId)
+    } catch (e: Exception) {
+      log.w("timetree: raw dump unavailable (${e::class.simpleName})")
+    }
+    val budget = LoginBudget()
+    val pages = mutableListOf<ProbePage>()
+    val requested = HashSet<Long>()
+    var cursor = since
+    while (pages.size < maxPages) {
+      cursor?.let { requested += it }
+      val page = dataCall(Endpoint.Probe(calendarId, list, cursor), budget, dump = true, ProbePage::of)
+      pages += page
+      val next = page.since
+      if (page.chunk != true || next == null || next in requested) break
+      cursor = next
+    }
+    return pages
   }
 
   /**
@@ -321,6 +360,18 @@ class OkHttpTimeTreeClient(
           .apply { if (since != null) addQueryParameter("since", since.toString()) }
           .build()
     }
+
+    /** [probeEvents]: `GET /calendar/{id}/<list>[?since=N]`. */
+    class Probe(id: Long, private val list: ProbeList, private val since: Long?) : Endpoint("probe", id) {
+      override val dumpName = "calendar_${id}_${list.dumpName}_" + (since?.let { "since_$it" } ?: "top")
+
+      override fun url(base: HttpUrl): HttpUrl =
+        base
+          .newBuilder()
+          .addPathSegments("calendar/$calendarId/${list.path}")
+          .apply { if (since != null) addQueryParameter("since", since.toString()) }
+          .build()
+    }
   }
 
   /** A fully read response; the body is read on OkHttp's thread, never on the caller's. */
@@ -371,6 +422,38 @@ class OkHttpTimeTreeClient(
       val code = (root["error"] as? JsonObject)?.get("code") ?: root["code"]
       val primitive = code as? JsonPrimitive ?: return null
       return primitive.intOrNull ?: primitive.content.toIntOrNull()
+    }
+  }
+}
+
+/** The event lists [OkHttpTimeTreeClient.probeEvents] can read. */
+enum class ProbeList(val path: String, val dumpName: String) {
+  /** The change feed that syncs read. */
+  SYNC("events/sync", "sync"),
+
+  /** `/calendar/{id}/events`, which another client says also lists deleted events. */
+  EVENTS("events", "list"),
+}
+
+/**
+ * One page as [OkHttpTimeTreeClient.probeEvents] sees it: the number of events, `chunk`, `since`,
+ * and the top-level keys. A field the page lacks, or has in another shape, is null.
+ */
+data class ProbePage(val events: Int?, val chunk: Boolean?, val since: Long?, val keys: List<String>) {
+  companion object {
+    fun of(body: String): ProbePage {
+      val obj =
+        try {
+          TtJson.parseToJsonElement(body) as? JsonObject
+        } catch (e: SerializationException) {
+          null
+        } ?: return ProbePage(null, null, null, emptyList())
+      return ProbePage(
+        events = (obj["events"] as? JsonArray)?.size,
+        chunk = (obj["chunk"] as? JsonPrimitive)?.booleanOrNull,
+        since = (obj["since"] as? JsonPrimitive)?.longOrNull,
+        keys = obj.keys.sorted(),
+      )
     }
   }
 }
