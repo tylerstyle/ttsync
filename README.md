@@ -192,10 +192,9 @@ screen) shows:
 interval, but never more often than hourly, to keep the load on TimeTree low. Android may run a
 sync up to 15 minutes early or late, and it waits while the phone is offline.
 
-New and changed events arrive with the next sync. For deleted events it depends on the size of the
-TimeTree calendar: a small calendar (up to a few hundred events, past ones included) is read
-completely on every sync, so deletions arrive within the sync interval too. A larger calendar is
-read completely every 6 hours, so a deletion there can take up to 6 hours.
+New, changed and deleted events arrive with the next sync, or right away with "Sync now". Every
+6 hours the app also reads the whole TimeTree calendar, to catch anything that slipped through.
+(Before 0.2.1, a deletion in a large calendar could take up to 6 hours.)
 
 **Notifications.** The app only notifies you when something needs your attention:
 
@@ -401,8 +400,8 @@ nicht. Nutzung auf eigenes Risiko. Kopiere nur Kalender, deren Besitzer zugestim
   kopiert.
 - **Im Alltag:** Der Status-Bildschirm zeigt die letzte erfolgreiche Synchronisierung (rot nach mehr
   als 24 Stunden) und hat „Jetzt synchronisieren“. Synchronisiert wird stündlich (wahlweise alle 3
-  oder 6 Stunden). Gelöschte Termine verschwinden bei kleinen Kalendern mit der nächsten
-  Synchronisierung, bei großen spätestens nach 6 Stunden.
+  oder 6 Stunden). Neue, geänderte und gelöschte Termine kommen mit der nächsten
+  Synchronisierung, mit „Jetzt synchronisieren“ sofort.
 - **Zuverlässig laufen lassen:** In der App die **Zuverlässigkeits-Checkliste** durchgehen:
   Akkunutzung „Uneingeschränkt“, „App-Aktivität bei Nichtnutzung pausieren“ aus, Google-Sync an.
   Samsung: die App bei den Hintergrundnutzungslimits als nie schlafend eintragen.

@@ -80,7 +80,7 @@ Packages under `de.tergelius.ttsync`:
 
 | Package | What it does | Main classes |
 |---|---|---|
-| `timetree` | Read-only client for TimeTree's web API: sign-in, calendars (with their labels and members), labels, the paged event feed; errors; request pacing; lenient decoding of the fields only filters use | `TimeTreeClient`, `OkHttpTimeTreeClient`, `EventFeed`, `Dtos`, `LenientSerializers`, `TtError`, `RequestPacer`, `RawResponseSink` |
+| `timetree` | Read-only client for TimeTree's web API: sign-in, calendars (with their labels and members), labels, the live event feed and the change list; errors; request pacing; lenient decoding of the fields only filters use | `TimeTreeClient`, `OkHttpTimeTreeClient`, `EventFeed`, `ChangeFeed`, `FeedEntries`, `Dtos`, `LenientSerializers`, `TtError`, `RequestPacer`, `RawResponseSink` |
 | `mapping` | Pure functions: TimeTree event → desired calendar row (`EventSpec`), time zones, all-day dates, recurrences, edited occurrences, the marker, the content hash; event filters and label names (0.2.0) | `EventMapper`, `EventSpec`, `RecurrenceNormalizer`, `OverrideResolver`, `TimeRules`, `Marker`, `SpecHash`, `EventFilter`, `LabelNames` (`LabelColor`) |
 | `store` | The app's own sync state in SQLite (framework, no Room): `snapshot`, `mapping`, `cursor`, `meta` | `SyncDatabase`, `SyncDb`, `SqlSyncDatabase`, `SyncSchema`, `SqlConnection` |
 | `calendar` | The only code that touches `CalendarContract`; enforces the marker rules | `CalendarGateway`, `ProviderCalendarGateway`, `GatewayRules` |
@@ -107,12 +107,14 @@ SyncWorker (WorkManager: "ttsync-periodic" or "ttsync-now")
   └─ Android's Google Calendar sync adapter uploads the rows to the Google account
 ```
 
-**FULL and INCREMENTAL.** TimeTree's event feed is ordered newest change first and pages backwards.
-A FULL run reads the whole feed, so it is the only run that can see a deletion (a missing event).
-An INCREMENTAL run reads from the top down to the calendar's high-water mark minus 2 minutes. A
-calendar whose feed had at most 3 pages at its last FULL runs FULL every time; a larger one runs
-INCREMENTAL with a FULL at least every 6 hours (`SMALL_FEED_PAGES`, `FULL_INTERVAL_MILLIS` in
-`SyncEngine.kt`). The engine logs which mode it picked and why.
+**FULL and INCREMENTAL.** A FULL run reads TimeTree's live feed (`/events/sync`, newest change
+first, paged backwards) completely; there a deleted event is simply missing. An INCREMENTAL run
+reads the change list (`/calendar/{id}/events?since=`, oldest change first) from the calendar's
+high-water mark minus 2 minutes: new, edited and deleted events (tombstones), usually in one
+request. Every calendar runs INCREMENTAL, with a FULL at least every 6 hours as a safety net
+(`FULL_INTERVAL_MILLIS` in `SyncEngine.kt`), and FULL whenever the change list can't be trusted.
+The engine logs which mode it picked and why. (`EventFeed`, `ChangeFeed`; DESIGN.md sections 3
+and 5.)
 
 **Idempotence.** A run that finds nothing changed in TimeTree writes nothing. A crash leaves at most
 one marked row without a mapping, which the next run adopts. The cursor only moves after the

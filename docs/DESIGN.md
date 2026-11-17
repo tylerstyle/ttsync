@@ -109,21 +109,36 @@ All requests go to `https://timetreeapp.com/api/v1` with the headers `X-Timetree
 - **Calendars.** `GET /calendars?since=0` on every run. This also shows when access is gone.
 - **Labels.** `GET /calendar/{id}/labels`, cached and refreshed on a full reconcile or when a label is
   unknown.
-- **Events.** `GET /calendar/{id}/events/sync[?since=N]`. Device test 2026-11-12: the feed is ordered
-  by `updated_at`, **newest change first**, and pages *backwards*. A request without `since` returns
-  the newest page; its `since` is the page's oldest `updated_at` − 1 and asks for the next older page;
-  `chunk == false` marks the oldest page. `?since=<last since>` returns nothing new, so `since` is never
-  stored. Every read starts at the top of the feed:
-  - FULL reads every page. If that took more than one page, it reads the top once more, down to 2 min
-    below the newest change it saw, so an event edited during the read (it moves to the top, possibly
-    out of a page not read yet) does not look deleted.
-  - INCREMENTAL stops after the first page that holds an event with `updated_at` ≤ the calendar's
-    high-water mark − 2 min. The high-water mark is the largest `max(updated_at, deactivated_at)` of all
-    events of the complete fetches so far (0 after a FULL of an empty calendar). Re-reading a few known
-    events is harmless: the hash diff writes nothing for them. If the feed turns out not to be ordered
-    newest first, the read goes on to the end.
-  - A uuid seen twice keeps its newest version. Fail with `ApiChanged` if a cursor repeats or after 500
-    pages. Never return partial lists.
+- **Events, FULL.** `GET /calendar/{id}/events/sync[?since=N]` (`EventFeed`). Device tests 2026-11-12
+  and 2026-11-17: the feed holds the **live events only**; a deleted event vanishes without a trace.
+  It is ordered by `updated_at`, **newest change first**, and pages *backwards*. A request without
+  `since` returns the newest page; its `since` is the page's oldest `updated_at` − 1 and asks for the
+  next older page; `chunk == false` marks the oldest page. FULL reads every page. If that took more
+  than one page, it reads the top once more, down to 2 min below the newest change it saw, so an event
+  edited during the read (it moves to the top, possibly out of a page not read yet) does not look
+  deleted.
+- **Events, INCREMENTAL (0.2.1).** `GET /calendar/{id}/events?since=N` (`ChangeFeed`). Device probe
+  2026-11-17:
+  - The list holds the same live events (identical JSON) **and the deleted ones as tombstones**:
+    `deactivated_at` set, every other field kept. Tombstones from 5 days earlier were still there; the
+    upper limit is unknown.
+  - It is ordered by `updated_at`, **oldest first**. A deletion sets `updated_at` (about 30 ms after
+    `deactivated_at`), so the tombstone moves to the newest end like any edit.
+  - `since=N` returns exactly the entries with `updated_at >= N`. The response's `since` is the newest
+    returned `updated_at` + 1 (N itself if nothing is newer): a forward cursor.
+  - Deleting one date of a series adds an EXDATE to the series and bumps its `updated_at`; there is
+    no separate entry. Deleting a whole series leaves one tombstone for the series.
+  - Not seen yet: a second page (`chunk == true`); the test calendar was too small.
+
+  INCREMENTAL asks for `since` = the calendar's high-water mark − 2 min and follows the returned
+  `since` while `chunk == true`. The high-water mark is the largest `max(updated_at, deactivated_at)`
+  fetched so far (0 after a FULL of an empty calendar); the server's `since` is never stored.
+  Re-reading a few known events is harmless: the hash diff writes nothing for them. The read is
+  trusted only while the list behaves as observed. An entry older than its page's `since`, an entry
+  out of order, `chunk == true` with a `since` that doesn't move forward, or more than 500 pages
+  makes the run read that calendar FULL instead ("change list unusable").
+- **Both reads.** A uuid seen twice keeps its newest version. A FULL read fails with `ApiChanged` if a
+  cursor repeats or after 500 pages. Never return partial lists.
 - **Re-login.** Only after a 401 on a data call or a 403 on `/calendars`. At most one login and one
   retry per run.
 - **Pacing.** At least 1 s between requests. "Sync now" within 60 s of a successful run starts no run
@@ -322,16 +337,21 @@ back to 0.1.x drops the filters and copies every event again.
 ## 5. Sync algorithm
 
 `FULL` runs on a calendar's first sync, after a mapper version bump, after the selection changes,
-after its filter changes (0.2.0, `cursor.filter_hash`), and on "Full resync". Beyond that, the size of its feed at the last FULL decides (`cursor.last_full_pages`,
-the first pass only). Deleted events seem to vanish from the feed instead of coming back as tombstones
-(step 3), so only a FULL sees a deletion:
-- **Small calendar**, at most `SMALL_FEED_PAGES` = 3 pages: every run is FULL. That is a few requests
-  per hour, and deletions reach Google within the sync interval, like every other change.
-- **Larger calendar**: runs are `INCREMENTAL`, with a FULL at least every `FULL_INTERVAL` = 6 h. A
-  deletion takes up to 6 h.
+after its filter changes (0.2.0, `cursor.filter_hash`), on "Full resync", when the change list can't be
+trusted (section 3), and at least every `FULL_INTERVAL` = 6 h. Every other run is `INCREMENTAL`: it
+reads the change list, which holds new, edited and deleted events, so a deletion reaches Google with
+the next run, "Sync now" included. That is usually one request per calendar.
 
-The engine logs the mode and why, e.g. `calendar 1: FULL (small feed, pages=1)` or
-`calendar 1: INCREMENTAL (last FULL 42 min ago, pages=5)`. Both thresholds are constants in
+The 6-hourly FULL is the safety net. It notices what the change list no longer shows: a tombstone
+TimeTree dropped while the phone was off for days (a run after a long pause is always FULL), or an
+event that vanished without one. It also repairs copies changed or deleted in Google.
+
+Until 0.2.0, INCREMENTAL read the top of `/events/sync`, which leaves deletions out. So a feed of at
+most 3 pages (`SMALL_FEED_PAGES`) ran FULL on every run, and in a larger one a deletion took up to
+6 h (a user report, 2026-11-17). `cursor.last_full_pages` is still recorded, for the log only.
+
+The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago, pages=5)` or
+`calendar 1: INCREMENTAL (last FULL 42 min ago, pages=5)`. `FULL_INTERVAL_MILLIS` is a constant in
 `DefaultSyncEngine`.
 
 1. **Preconditions.**
@@ -358,14 +378,12 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (small feed, pages=1)` 
    provider that does not show `dirty` gives no signal and no failure.
 2. **Crash check.** If `meta.run_in_progress` is still set, this run includes the adoption scan (step
    6) even when it is INCREMENTAL. Then set the flag.
-3. **Fetch.** Call `GET /calendars` and mark lost calendars. Fetch each active calendar's feed from the
-   top: INCREMENTAL down to its high-water mark (section 3), everything in FULL. No high-water mark
-   means FULL. Store live events as snapshots, keep tombstones of occurrences that have a
-   `recurring_uuid`, and drop all other deleted or skipped events. Not settled yet: whether a deleted
-   event shows up in the feed as a tombstone (`deactivated_at`). In the device test the FULL after a
-   deletion fetched 7 of the 8 events, so the deleted one was apparently left out. Without a tombstone,
-   a deletion arrives with the next FULL (see above: within the sync interval for a small calendar,
-   within 6 h otherwise).
+3. **Fetch.** Call `GET /calendars` and mark lost calendars. Fetch each active calendar's events
+   (section 3): INCREMENTAL reads the change list from its high-water mark on, FULL reads the whole
+   live feed. No high-water mark means FULL. Store live events as snapshots, keep tombstones of
+   occurrences that have a `recurring_uuid`, and drop all other deleted or skipped events. A deletion
+   arrives as a tombstone in INCREMENTAL (`Absent`), and as an absence in FULL (settled by the device
+   probe of 2026-11-17).
 4. **Affected events.** INCREMENTAL: the changed uuids and the parents of changed overrides and
    tombstones. FULL: everything in that calendar.
 5. **Diff.** This is the only step that deletes during sync. "In window" means `mapping.end_at` ≥ today −
@@ -594,10 +612,13 @@ Engine (a fake gateway with 7 foreign rows in the target calendar):
 - E9: target change. E10: deselect.
 - E11: lost access. A FULL run plus an adoption scan delete nothing from the paused calendar.
 - E12: a failed run keeps the cursor.
-- Incremental after FULL picks up an edit, a new event and a tombstone; it stops after the first page
-  when the top of the feed is known; an event edited during a FULL read is not deleted.
-- Adaptive FULL: a small feed is FULL on every run (a deletion arrives with the next run), a larger
-  one INCREMENTAL with a FULL after 6 h; the recorded feed size switches the mode.
+- Incremental after FULL reads the change list from the high-water mark minus the overlap and picks
+  up an edit, a new event and a tombstone; without changes it is one request; a deleted series goes
+  with the next run; an event edited during a FULL read is not deleted.
+- 0.2.1: a small calendar runs INCREMENTAL too, and a deletion arrives with the next run; a FULL at
+  least every 6 h catches what the change list misses; the feed size is recorded by FULL runs only; a
+  change list that can't be trusted falls back to a FULL read (C9 in the client tests: forward paging,
+  tombstones, an empty answer, and the four ways the list is not trusted).
 - E13: a mapping with an old `end_at` that is missing from the full fetch stays untouched.
 - E14: marked rows with unknown or out-of-window uuids stay untouched, even in a FULL run on an empty
   mapping table.
@@ -754,6 +775,8 @@ Resolved:
 - The repository is <https://github.com/tylerstyle/ttsync>.
 - 0.2.0: relabelling an event bumps its `updated_at`, so INCREMENTAL runs see it; renaming a label
   doesn't touch the events (device run 5, section 4a).
+- 0.2.1: deleted events vanish from `/events/sync` but stay in `/calendar/{id}/events` as tombstones,
+  which INCREMENTAL now reads (device probe 2026-11-17, section 3).
 
 Still open: none.
 
@@ -796,3 +819,17 @@ reviews of 0.2.0 get their own files in [reviews/](reviews/).
 | Editing | The editor works on a draft that Sources saves with the selection, so one question covers deselected calendars and narrower filters, and a filter can be set during setup. Back keeps the edit, like Done; leaving Sources without Save drops it. | 7.2 |
 | Word lists | One text field per list, words separated by commas (a word can't contain a comma). | 7.2 |
 | Downgrade | 0.1.x ignores the filters and copies every event again (README). | 4a |
+
+### 0.2.1: deletions with every sync
+
+A user reported that an event deleted in TimeTree stayed in Google. Cause: INCREMENTAL runs read
+`/events/sync`, which leaves deleted events out, so only a FULL saw a deletion, up to 6 h later in a
+calendar of more than 3 pages. The owner approved the change on 2026-11-17.
+
+| Topic | Decision | Where |
+|---|---|---|
+| Change list | INCREMENTAL reads `/calendar/{id}/events?since=` (forward, with tombstones), found with a debug probe on the phone. FULL keeps `/events/sync`. | 3, 5 |
+| Small calendars | No more FULL on every run: every calendar runs INCREMENTAL between the 6-hourly FULLs, which lowers the load. | 5 |
+| Distrust | A change list that doesn't behave as observed makes that calendar's run FULL; nothing is guessed. | 3 |
+| Upgrade | Reuses the stored high-water mark: no schema change, no extra FULL. | 3, 5 |
+| Debug probe | `DebugReceiver` `PROBE_EVENTS` reads either list raw; kept for future questions about the API. | DEVELOPMENT.md |
