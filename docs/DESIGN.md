@@ -487,8 +487,8 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
   copies the description into it, marker included. Before 0.2.2 the adoption scan took it for a
   duplicate and deleted it, and Google turned that into a cancelled date: the date vanished from
   the calendar (device run 10). Now the scan leaves such rows out, the R1 check refuses them
-  (`EXCEPTION`) and the R2 precondition excludes them. They belong to the user; when the app
-  deletes their series row, the provider and Google decide what becomes of them.
+  (`EXCEPTION`) and the R2 precondition excludes them. They belong to the user. When the app
+  deletes their series row, Google removes them by itself a few minutes later (device run 11).
 
 Known v1 behaviour (device test): TimeTree's default labels have empty names (the app shows them
 localized), so in 0.1.x they added no `Label:` line; only renamed labels did. Since 0.2.0 (B3) an
@@ -955,8 +955,8 @@ Fixed after the device session of 2026-11-26 (DEVICE-TESTS.md, run 10):
 
 | Finding | Outcome | Where |
 |---|---|---|
-| F1: the edited date of a copied series was deleted as a duplicate, and the date vanished | Confirmed on the phone. Rows with `original_id` or `original_sync_id` are never ours (R6). | 5 |
-| F5: after a reset of the phone's calendar storage the target's `_ID` was another calendar of the same account, and the app would have written into it | Confirmed on the phone. The target also stores Google's server id of the calendar (`Calendars.OWNER_ACCOUNT`; `Calendars._SYNC_ID` is empty for Google calendars); if the `_ID` holds another calendar or one without that id, the target counts as gone: nothing is written and Status asks to choose it again. A target stored by an older version gets the id at its next run. | 5 (step 1, R3), 7 |
+| F1: the edited date of a copied series was deleted as a duplicate, and the date vanished | Confirmed on the phone. Rows with `original_id` or `original_sync_id` are never ours (R6). Verified in run 11. | 5 |
+| F5: after a reset of the phone's calendar storage the target's `_ID` was another calendar of the same account, and the app would have written into it | Confirmed on the phone. The target also stores Google's server id of the calendar (`Calendars.OWNER_ACCOUNT`; `Calendars._SYNC_ID` is empty for Google calendars); if the `_ID` holds another calendar or one without that id, the target counts as gone: nothing is written and Status asks to choose it again. A target stored by an older version gets the id at its next run. Run 11: id stored and stable across a reset; the refusal itself only in unit tests (the `_ID`s did not shift again). | 5 (step 1, R3), 7 |
 | F7: events sharing one `updated_at` across a page boundary | Not checkable on the server. Defensive: pages overlap by the boundary's change time; a whole page of one change time proves no absence. | 3 |
 | F22: a manual `requestSync` could run although the user had switched the account's calendar sync off | Not checkable (the phone runs Android 17; it concerns Android 8–12). The request is no longer a manual one, so it obeys the switches everywhere. | 5 |
 

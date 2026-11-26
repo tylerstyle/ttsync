@@ -232,6 +232,32 @@ Also seen:
 - After the F1 fault two cancelled exception rows (no title, no marker) stay in the target
   calendar. The app cannot see them; they are invisible in Google Calendar.
 
+## Run 11: retest of the fixes for O2 (F1), O3 (F5) and "Sync now" after a failed run
+
+2026-11-26, debug builds of the working tree before `54f9fe4` (the second one installed in place;
+it reads the calendar's server id from `Calendars.OWNER_ACCOUNT`, since `Calendars._SYNC_ID`
+turned out to be empty for all 21 Google calendars of the phone).
+
+| Area | Result |
+|---|---|
+| O2: one date of a copied series edited in Google Calendar; FULL: `duplicates=0`, Deleted 0, the exception row untouched, 4 instances | Pass |
+| O2: mappings dropped, FULL: the series row is adopted, the exception row untouched | Pass |
+| O2: series renamed in TimeTree: Updated 1; the edited date keeps its old title | Pass |
+| O2: series deleted in TimeTree: Deleted 1 (the series row only) | Pass, see below |
+| O3: the target stored by the first build gets its server id at the next run (`target: server id stored`); the id is set and distinct for all 21 calendars | Pass |
+| O3: calendar storage cleared: the server ids are equal before and after; the copies are adopted (adopted 9, added 0, no duplicates) | Pass |
+| O3: "Target calendar is gone" when the `_ID` holds another calendar | **Not checkable**: this time no calendar changed its `_ID`. Covered by unit tests only (`TargetCalendarTest`, `SyncEngineReviewFixesTest`) |
+| After a failed run: headline "Last sync failed, trying again", "Next sync" 15 min ahead, "Sync now" enabled; a tap runs at once; afterwards only the periodic job is left | Pass |
+| One FULL and one INCREMENTAL with the changed paging (one page each) | Pass |
+| The 7 foreign events, 6 checks | Pass |
+
+When the series was deleted in TimeTree, the edited date stayed as a single event (with the
+marker; the app's next FULL did not count it) and Google removed it by itself between 2.5 and 5
+minutes later. So a stray event shows for a few minutes; nothing stays.
+
+The retry job of a failed "Sync now" has no network constraint (it would also start offline and
+fail again); the periodic job has one.
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -247,8 +273,8 @@ Also seen:
 | L3 | Low | Extra space under the "Events: …" line on Sources. | 0.2.0 fix round: the line sits right under its calendar's name, like a subtitle. Verified in run 6. |
 | L4 | Low | German relative times in parentheses started with a capital: "(Vor 1 Minute)". | 0.2.0 fix round: the first letter is lower case, locale-aware: "(vor 1 Minute)"; in English "(5 minutes ago)" is unchanged and "(In 40 minutes)" becomes "(in 40 minutes)". Verified in run 6. |
 | D1 | High | Google's sync adapter restored a copy the app had just deleted (`deleted = 1`, not uploaded yet) to its unchanged server version, right after a feed sync of the target calendar. The app had dropped the mapping with the delete, so it never looked at the row again: the deleted TimeTree date stayed in Google, and a Full resync counted it as unmanaged. Seen once, in run 7; 0.2.0 had the same gap. | 0.2.1: every deleted copy is watched (`pending_delete`, schema 4) until its row is gone, and deleted again if it comes back (DESIGN.md section 5, step 6a). Verified in run 8 with the restore reproduced by hand. |
-| O2 | High | F1: when the user edits one date of a copied series in Google Calendar ("This event"), Google creates an exception row and copies the description into it, marker included. The next FULL counted it as a duplicate and deleted it; Google made that a cancelled date, so the date vanished from the calendar for good. Seen in run 10; every version so far has it. | 0.2.2: rows with `original_id` or `original_sync_id` are never the app's (DESIGN.md section 5, R6). Not verified on the phone yet. |
-| O3 | High | F5: after the phone's calendar storage was cleared, Google's sync numbered the calendars anew: the target's `_ID` then was another writable calendar of the same account. The app noticed nothing (Status "Syncing normally", the old name) and the next sync would have written every copy into the wrong calendar. Seen in run 10 (the sync was prevented by hand). | 0.2.2: the target also stores the calendar's server id; an `_ID` that holds another calendar counts as a missing target. Not verified on the phone yet. |
+| O2 | High | F1: when the user edits one date of a copied series in Google Calendar ("This event"), Google creates an exception row and copies the description into it, marker included. The next FULL counted it as a duplicate and deleted it; Google made that a cancelled date, so the date vanished from the calendar for good. Seen in run 10; every version so far has it. | 0.2.2: rows with `original_id` or `original_sync_id` are never the app's (DESIGN.md section 5, R6). Verified in run 11. |
+| O3 | High | F5: after the phone's calendar storage was cleared, Google's sync numbered the calendars anew: the target's `_ID` then was another writable calendar of the same account. The app noticed nothing (Status "Syncing normally", the old name) and the next sync would have written every copy into the wrong calendar. Seen in run 10 (the sync was prevented by hand). | 0.2.2: the target also stores the calendar's server id; an `_ID` that holds another calendar counts as a missing target (`Calendars.OWNER_ACCOUNT`). Run 11 verified that the id is stored, stable across a storage reset and that the copies are adopted; the refusal itself ran only in unit tests, because the `_ID`s did not shift again. |
 | L5 | Low | Android 13+'s Settings → App languages didn't offer the app: no locale config. | 0.2.0 fix round: AGP generates one for English and German. Verified in run 6. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in
