@@ -33,6 +33,7 @@ class OkHttpTimeTreeClientTest {
   private val log = RecordingLog()
   private val thrown = mutableListOf<Throwable>()
   private val now = 1794481200000L
+  private var redirectsFollowed = 0
   private lateinit var client: OkHttpTimeTreeClient
 
   @Before
@@ -40,7 +41,7 @@ class OkHttpTimeTreeClientTest {
     server.start()
     client =
       OkHttpTimeTreeClient(
-        http = TimeTreeApi.newOkHttpClient(),
+        http = TimeTreeApi.newOkHttpClient(server.url("/api/v1/")),
         sessions = store,
         pacer = pacer,
         rawSink = sink,
@@ -54,8 +55,8 @@ class OkHttpTimeTreeClientTest {
   @After
   fun tearDown() {
     server.close()
-    // Every request waited for the pacer.
-    assertEquals(server.requestCount, pacer.slots)
+    // Every request waited for the pacer (a redirect OkHttp follows is part of its request).
+    assertEquals(server.requestCount - redirectsFollowed, pacer.slots)
     // Nothing secret in logs, exception messages (with causes) or dump names.
     val texts =
       log.lines +
@@ -193,7 +194,7 @@ class OkHttpTimeTreeClientTest {
     val result = client.changes(7, since = at(10))!!
 
     assertEquals(
-      listOf("/api/v1/calendar/7/events?since=${at(10)}", "/api/v1/calendar/7/events?since=${at(20) + 1}"),
+      listOf("/api/v1/calendar/7/events?since=${at(10)}", "/api/v1/calendar/7/events?since=${at(20)}"),
       List(2) { take().target },
     )
     assertFalse(result.complete) // a list of changes never proves absence
@@ -202,7 +203,7 @@ class OkHttpTimeTreeClientTest {
     assertEquals(listOf("b", "d"), result.events.filter { it.event.isDeactivated }.map { it.event.uuid })
     assertEquals(at(40), result.highWater)
     assertEquals(
-      listOf("calendar_7_changes_since_${at(10)}", "calendar_7_changes_since_${at(20) + 1}"),
+      listOf("calendar_7_changes_since_${at(10)}", "calendar_7_changes_since_${at(20)}"),
       sink.names,
     )
   }
@@ -244,7 +245,7 @@ class OkHttpTimeTreeClientTest {
         }
       }
     val capped =
-      OkHttpTimeTreeClient(TimeTreeApi.newOkHttpClient(), store, pacer, sink, server.url("/api/v1/"), maxPages = 5)
+      OkHttpTimeTreeClient(TimeTreeApi.newOkHttpClient(server.url("/api/v1/")), store, pacer, sink, server.url("/api/v1/"), maxPages = 5)
 
     assertNull(capped.changes(7, since = at(0)))
     assertEquals(5, server.requestCount)
@@ -339,7 +340,8 @@ class OkHttpTimeTreeClientTest {
     val result = client.events(7)
 
     assertEquals(
-      listOf(null, "since=${at(30) - 1}", "since=${at(10) - 1}", null, "since=${at(40) - 1}"),
+      // Each next page is asked from the page's oldest change time, not one below it (F7).
+      listOf(null, "since=${at(30)}", "since=${at(10)}", null, "since=${at(40)}"),
       List(5) { take().url.encodedQuery },
     )
     assertTrue(result.complete)
@@ -352,10 +354,10 @@ class OkHttpTimeTreeClientTest {
     assertEquals(
       listOf(
         "calendar_7_events_top",
-        "calendar_7_events_since_${at(30) - 1}",
-        "calendar_7_events_since_${at(10) - 1}",
+        "calendar_7_events_since_${at(30)}",
+        "calendar_7_events_since_${at(10)}",
         "calendar_7_events_top",
-        "calendar_7_events_since_${at(40) - 1}",
+        "calendar_7_events_since_${at(40)}",
       ),
       sink.names,
     )
@@ -373,17 +375,63 @@ class OkHttpTimeTreeClientTest {
 
   @Test
   fun c4_aFeedOutOfOrderGetsNoSecondPass() = runTest {
-    // The second pass's early stop relies on newest-first order; without it, the first pass alone
-    // counts (and the log says so).
+    // The second pass's early stop relies on newest-first order. Without it there is only the
+    // first pass, which may have missed an event edited meanwhile: the read is not complete, so
+    // the engine deletes nothing for missing events (review 2026-11, F9). The log says so.
     server.enqueue(response(feedPage(true, 0, ev("old", 0), ev("new", 40))))
     server.enqueue(response(feedPage(false, 0, ev("x", 20))))
 
     val result = client.events(7)
 
     assertEquals(2, server.requestCount)
-    assertTrue(result.complete)
+    assertFalse(result.complete)
     assertEquals(setOf("old", "new", "x"), result.events.map { it.event.uuid }.toSet())
-    assertTrue(log.lines.any { it.endsWith("feed not ordered newest first; reading every page") })
+    assertTrue(log.lines.any { it.endsWith("feed not ordered newest first; no second pass") })
+  }
+
+  @Test
+  fun c4_aSinglePageOutOfOrderIsStillComplete() = runTest {
+    // One page holds the whole feed, whatever its order: nothing can have moved between pages.
+    server.enqueue(response(feedPage(false, 0, ev("old", 0), ev("new", 40))))
+
+    assertTrue(client.events(7).complete)
+  }
+
+  @Test
+  fun aRedirectToAnotherHostIsRefused() = runTest {
+    // The session cookie is a manual header and would travel along (review 2026-11, F12).
+    val other = MockWebServer()
+    other.start()
+    try {
+      server.enqueue(MockResponse.Builder().code(302).addHeader("Location", other.url("/elsewhere").toString()).build())
+      // The other server differs only in its port; that is another origin already.
+      expectError<TtError.Transient>(thrown) { client.calendars() }
+      assertEquals(0, other.requestCount)
+    } finally {
+      other.close()
+    }
+  }
+
+  @Test
+  fun aRedirectOnTheSameHostIsFollowed() = runTest {
+    server.enqueue(MockResponse.Builder().code(302).addHeader("Location", "/api/v1/calendars?moved=1").build())
+    server.enqueue(response("""{"calendars": []}"""))
+
+    assertEquals(emptyList<TtCalendar>(), client.calendars())
+    assertEquals(2, server.requestCount)
+    redirectsFollowed = 1
+  }
+
+  @Test
+  fun retryAfterIsCappedAtADay() = runTest {
+    // A header with a huge value must not stop syncing for good (review 2026-11, F10).
+    server.enqueue(MockResponse.Builder().code(429).addHeader("Retry-After", "31536000").body("{}").build())
+    val year = expectError<TtError.RateLimited>(thrown) { client.calendars() }
+    assertEquals(TtError.RateLimited.MAX_BACKOFF, year.backoff)
+
+    server.enqueue(MockResponse.Builder().code(429).addHeader("Retry-After", "9000000000000000000").body("{}").build())
+    val absurd = expectError<TtError.RateLimited>(thrown) { client.calendars() }
+    assertEquals(TtError.RateLimited.MAX_BACKOFF, absurd.backoff)
   }
 
   @Test
@@ -417,7 +465,7 @@ class OkHttpTimeTreeClientTest {
     // The real cap is 500 pages; 500 local round trips take ~20 s, so this run uses 20.
     val capped =
       OkHttpTimeTreeClient(
-        TimeTreeApi.newOkHttpClient(), store, pacer, sink, server.url("/api/v1/"), maxPages = 20)
+        TimeTreeApi.newOkHttpClient(server.url("/api/v1/")), store, pacer, sink, server.url("/api/v1/"), maxPages = 20)
 
     expectError<TtError.ApiChanged>(thrown) { capped.events(7) }
     assertEquals(20, server.requestCount)

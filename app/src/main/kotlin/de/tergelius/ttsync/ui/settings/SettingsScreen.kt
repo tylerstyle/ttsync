@@ -68,8 +68,10 @@ fun SettingsScreen(
   val resyncMessage = stringResource(R.string.settings_resync_started)
   LaunchedEffect(state.resyncStarted) {
     if (state.resyncStarted) {
-      viewModel.onResyncShown()
+      // Consumed only after the snackbar is gone: consuming it first changes this effect's key,
+      // and Compose cancels the effect, snackbar included (as on Status, device retest R1).
       snackbar.showSnackbar(resyncMessage)
+      viewModel.onResyncShown()
     }
   }
   LaunchedEffect(state.next) {

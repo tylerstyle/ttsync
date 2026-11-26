@@ -19,7 +19,8 @@ interface StatusRepository {
 
   /**
    * Stores the report of a finished run. A success sets `lastSuccessAt` and resets
-   * `consecutiveFailures`; a failure increments it.
+   * `consecutiveFailures`; a failure increments it. [SyncStatus.pausedCalendars] follows the
+   * calendars the report lists ([SyncStatus.pausedAfter]).
    */
   suspend fun recordRun(report: SyncReport)
 
@@ -37,6 +38,12 @@ interface StatusRepository {
 
   /** The calendars whose loss of access was notified ([SyncStatus.accessLostNotified]). */
   suspend fun setAccessLostNotified(ttCalIds: Set<Long>)
+
+  /**
+   * The calendars were deselected: they leave [SyncStatus.accessLostNotified] and
+   * [SyncStatus.pausedCalendars], so a calendar selected again later starts fresh.
+   */
+  suspend fun forgetCalendars(ttCalIds: Set<Long>)
 
   /** Sign-out. */
   suspend fun clear()
@@ -56,7 +63,19 @@ data class SyncStatus(
    * [de.tergelius.ttsync.sync.AccessLostNotices]); null if never stored (before 0.2.2).
    */
   val accessLostNotified: Set<Long>? = null,
+  /**
+   * The calendars known to be paused. Unlike [lastReport], it survives a run that fails before it
+   * looks at the calendars (no network, say), so Status keeps showing them (review 2026-11, M3).
+   * Null: never stored (a status written by 0.2.1 or older); read [paused].
+   */
+  val pausedCalendars: Set<Long>? = null,
 ) {
+  /** [pausedCalendars], or without a stored set the paused calendars of the last report. */
+  val paused: Set<Long>
+    get() =
+      pausedCalendars
+        ?: lastReport?.calendars.orEmpty().filter { it.state == CalendarState.PAUSED }.mapTo(HashSet()) { it.ttCalId }
+
   /** After the second rejection in a row, automatic logins stop until the user signs in. */
   val autoLoginStopped: Boolean
     get() = authRejections >= 2
@@ -92,6 +111,16 @@ data class SyncStatus(
   }
 
   companion object {
+    /**
+     * [pausedCalendars] after [report]: a calendar the report lists follows it, every other one
+     * stays as it was (a run that failed early lists none).
+     */
+    fun pausedAfter(known: Set<Long>, report: SyncReport): Set<Long> {
+      val listed = report.calendars.mapTo(HashSet()) { it.ttCalId }
+      val paused = report.calendars.filter { it.state == CalendarState.PAUSED }.map { it.ttCalId }
+      return known - listed + paused
+    }
+
     val AUTH_BLOCK: Duration = 6.hours
     val STALE_AFTER: Duration = 24.hours
     const val FAILURES_BEFORE_NOTIFY = 3
@@ -107,6 +136,6 @@ enum class SyncHealth {
   /** Every selected TimeTree calendar lost access. */
   PAUSED,
 
-  /** "Target calendar was deleted", with a button to the Target screen. */
+  /** "Target calendar is gone", with a button to the Target screen. */
   TARGET_DELETED,
 }

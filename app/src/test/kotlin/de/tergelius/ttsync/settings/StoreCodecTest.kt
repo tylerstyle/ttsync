@@ -73,6 +73,9 @@ class StoreCodecTest {
     val json = StoreCodec.encodeTarget(target)
     assertEquals("""{"calendarId":15,"accountName":"user@example.org","accountType":"com.google"}""", json)
     assertEquals(target, StoreCodec.decodeTarget(json))
+    // 0.2.2 adds the server id; the JSON above is what 0.2.1 stored and still decodes.
+    val identified = target.copy(serverId = "cal@group.example")
+    assertEquals(identified, StoreCodec.decodeTarget(StoreCodec.encodeTarget(identified)))
   }
 
   @Test

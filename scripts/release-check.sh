@@ -6,7 +6,7 @@
 #   mapping.txt  default: app/build/outputs/mapping/release/mapping.txt (R8 mapping of that build)
 #
 # Fails if the APK is debuggable or contains the debug-only code (debug.DebugReceiver, the raw API
-# dump timetree.FileRawResponseSink), or if a signed APK does not verify. Prints the version, the
+# dump timetree.FileRawResponseSink), or if it is signed with another key than the release key. Prints the version, the
 # signing certificate and the APK's SHA-256 for the release notes. Exits with 3 if the APK is
 # otherwise fine but unsigned.
 
@@ -39,7 +39,9 @@ if grep -Eq 'Lde/tergelius/ttsync/debug/|FileRawResponseSink' <<<"$classes"; the
   fail "the dex contains debug-only classes"
 fi
 # Name-independent: the debug actions and the dump folder are string constants of that code.
-if cat "$tmp"/classes*.dex | grep -aqE 'de\.tergelius\.ttsync\.debug\.|debug/raw'; then
+# grep reads the files itself: with `cat … | grep -q` and pipefail, a match ended cat with SIGPIPE,
+# the pipeline failed and this check could never fire (review 2026-11, F6).
+if grep -aqE 'de\.tergelius\.ttsync\.debug\.|debug/raw' "$tmp"/classes*.dex; then
   fail "the dex contains strings of the debug-only code"
 fi
 echo "OK   dex: no DebugReceiver, no FileRawResponseSink"
@@ -57,9 +59,16 @@ fi
 
 if "$bt/apksigner" verify "$apk" >/dev/null 2>&1; then
   echo "OK   signature:"
-  "$bt/apksigner" verify --verbose --print-certs "$apk" |
-    grep -E '^Verified using .*: true$|Signer.*: (certificate (DN|SHA-256 digest)|key size)' |
+  certs=$("$bt/apksigner" verify --verbose --print-certs "$apk")
+  grep -E '^Verified using .*: true$|Signer.*: (certificate (DN|SHA-256 digest)|key size)' <<<"$certs" |
     sed 's/^/     /'
+  # The release key's fingerprint as docs/RELEASING.md states it. A debug-signed APK verifies too.
+  expected=$(grep -Eom1 '^([0-9A-F]{2}:){31}[0-9A-F]{2}$' "$root/docs/RELEASING.md" | tr -d ':' | tr 'A-F' 'a-f' || true)
+  # "Signer #1 certificate …" or, with --verbose, "V2 Signer: certificate …": every signer line.
+  actual=$(sed -n 's/^.*Signer.*certificate SHA-256 digest: //p' <<<"$certs" | sort -u)
+  [[ -n $expected ]] || fail "no release key fingerprint found in docs/RELEASING.md"
+  [[ $actual == "$expected" ]] || fail "signed with another key: $actual (release key: $expected)"
+  echo "OK   signed with the release key of docs/RELEASING.md"
   signed=1
 else
   echo "WARN not signed, or the signature does not verify: don't publish this APK"

@@ -135,6 +135,15 @@ class FakeStatus(private val calls: Calls, initial: SyncStatus = SyncStatus()) :
     flow.update { it.copy(accessLostNotified = ttCalIds) }
   }
 
+  override suspend fun forgetCalendars(ttCalIds: Set<Long>) {
+    flow.update {
+      it.copy(
+        accessLostNotified = it.accessLostNotified?.minus(ttCalIds),
+        pausedCalendars = it.paused - ttCalIds,
+      )
+    }
+  }
+
   override suspend fun clear() {
     calls.add("status.clear")
     flow.value = SyncStatus()
@@ -180,8 +189,12 @@ class FakeEngine(private val calls: Calls, private val settings: FakeSettings? =
 
   override suspend fun run(request: SyncRequest): SyncReport = error("not used by the UI")
 
+  /** Suspends a removal before it does anything, e.g. until the test lets it go on. */
+  var beforeRemoval: (suspend () -> Unit)? = null
+
   override suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean): RemovalReport {
     calls.add("engine.removeAllCopies(${target.calendarId})")
+    beforeRemoval?.invoke()
     removeAllError?.let { throw it }
     removalFailure?.let { return RemovalReport(deleted = 0, rejected = 0, failure = it) }
     // Like the engine: syncing stops only once the deletes went through.
@@ -194,6 +207,11 @@ class FakeEngine(private val calls: Calls, private val settings: FakeSettings? =
     removalFailure?.let { return RemovalReport(deleted = 0, rejected = 0, failure = it) }
     settings?.flow?.update { s -> s.copy(sources = s.sources.filterNot { it.id in ttCalIds }) }
     return removal
+  }
+
+  override suspend fun <T> exclusive(block: suspend () -> T): T {
+    calls.add("engine.exclusive")
+    return block()
   }
 
   override suspend fun dropMappings() {
@@ -267,13 +285,13 @@ class FakeClient(private val calls: Calls) : TimeTreeClient {
 }
 
 class FakeNotifier(private val calls: Calls) : SyncNotifier {
-  override fun showFailure(failure: SyncFailure) = Unit
+  override fun showFailure(failure: SyncFailure) = true
 
   override fun clearFailure() {
     calls.add("notifier.clearFailure")
   }
 
-  override fun showAccessLost(ttCalId: Long, calendarName: String?) = Unit
+  override fun showAccessLost(ttCalId: Long, calendarName: String?) = true
 
   override fun clearAccessLost(ttCalId: Long) {
     calls.add("notifier.clearAccessLost($ttCalId)")

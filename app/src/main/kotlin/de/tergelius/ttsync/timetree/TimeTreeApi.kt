@@ -1,8 +1,11 @@
 package de.tergelius.ttsync.timetree
 
+import java.net.ProtocolException
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 
 /**
@@ -42,9 +45,22 @@ object TimeTreeApi {
   val READ_TIMEOUT = 30.seconds
   val CALL_TIMEOUT = 60.seconds
 
-  /** The shared OkHttp client with the design's timeouts. No cookie jar, no cache, default User-Agent. */
-  fun newOkHttpClient(): OkHttpClient =
+  /**
+   * The shared OkHttp client with the design's timeouts. No cookie jar, no cache, default User-Agent.
+   * Requests go only to the host of [baseUrl]: the session cookie is a manual header and the
+   * sign-in body holds the password, and OkHttp would send both along with a redirect to another
+   * host. Such a redirect fails as an IO error instead ([TtError.Transient]).
+   */
+  fun newOkHttpClient(baseUrl: HttpUrl = BASE_URL.toHttpUrl()): OkHttpClient =
     OkHttpClient.Builder()
+      .addNetworkInterceptor { chain ->
+        val url = chain.request().url
+        if (url.host != baseUrl.host || url.port != baseUrl.port || url.scheme != baseUrl.scheme) {
+          // ProtocolException: OkHttp does not try the request again on another route.
+          throw ProtocolException("request to another host refused")
+        }
+        chain.proceed(chain.request())
+      }
       .connectTimeout(CONNECT_TIMEOUT.inWholeMilliseconds, TimeUnit.MILLISECONDS)
       .readTimeout(READ_TIMEOUT.inWholeMilliseconds, TimeUnit.MILLISECONDS)
       .callTimeout(CALL_TIMEOUT.inWholeMilliseconds, TimeUnit.MILLISECONDS)

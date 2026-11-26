@@ -35,8 +35,9 @@ interface RequestPacer {
 }
 
 /**
- * The process-wide [RequestPacer]. [nowMillis] must be monotonic (the default is), [delay] is
- * replaceable for tests.
+ * The process-wide [RequestPacer]. [nowMillis] must be monotonic, [delay] is replaceable for
+ * tests. The default clock is right for the JVM; on Android pass `SystemClock.elapsedRealtime`,
+ * because `nanoTime` stops while the phone sleeps and a back-off would last that much longer.
  */
 class DefaultRequestPacer(
   private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },

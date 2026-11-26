@@ -1,5 +1,9 @@
 package de.tergelius.ttsync.ui.login
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.view.WindowManager
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,11 +18,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -53,6 +59,7 @@ fun LoginScreen(
   viewModel: LoginViewModel = viewModel(factory = LocalViewModelFactory.current),
 ) {
   val state by viewModel.state.collectAsStateWithLifecycle()
+  SecureWindow()
   LaunchedEffect(state.next) {
     state.next?.let {
       viewModel.onNavigated()
@@ -68,6 +75,23 @@ fun LoginScreen(
     onTogglePassword = viewModel::togglePasswordVisible,
     onSubmit = viewModel::submit,
   )
+}
+
+/**
+ * While the sign-in screen is shown, its window is `FLAG_SECURE`: no screenshots, no screen
+ * recording, and no content in the recent-apps preview. The password can be made visible here
+ * (review 2026-11, F21).
+ */
+@Composable
+private fun SecureWindow() {
+  val context = LocalContext.current
+  DisposableEffect(context) {
+    var owner: Context? = context
+    while (owner is ContextWrapper && owner !is Activity) owner = owner.baseContext
+    val window = (owner as? Activity)?.window
+    window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+  }
 }
 
 @Composable

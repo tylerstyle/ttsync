@@ -67,6 +67,8 @@ class TargetViewModel(
 
   /** Re-checks the permission and reloads the list (screen resume, Refresh, after the request). */
   fun refresh() {
+    // Not during a switch: a reload would change the list and the selection under it.
+    if (_state.value.saving) return
     refreshJob?.cancel()
     refreshJob = viewModelScope.launch {
       val permission =
@@ -94,8 +96,13 @@ class TargetViewModel(
           options = eligible.map { info -> TargetOption(info, otherEvents = null) },
           current = stored.target,
           currentName = stored.targetDisplayName,
+          // Only if that row still is the stored calendar: after a reset of the phone's calendar
+          // storage the `_ID` can belong to another one (F5).
           selectedId =
-            keep ?: stored.target?.calendarId?.takeIf { id -> eligible.any { it.id == id } },
+            keep
+              ?: stored.target
+                ?.takeIf { t -> eligible.any { t.isSameCalendar(TargetCalendar.of(it)) } }
+                ?.calendarId,
         )
       }
       for (info in eligible) {
@@ -129,7 +136,7 @@ class TargetViewModel(
     val option = state.selected ?: return
     if (!state.canConfirm) return
     val current = state.current
-    if (current != null && current != TargetCalendar.of(option.info)) {
+    if (current != null && !current.isSameCalendar(TargetCalendar.of(option.info))) {
       _state.update {
         it.copy(
           confirmSwitch =

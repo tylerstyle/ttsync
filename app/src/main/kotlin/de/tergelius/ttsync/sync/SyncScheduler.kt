@@ -69,10 +69,13 @@ interface SyncScheduler {
 
 data class ScheduleState(
   val periodicScheduled: Boolean = false,
-  /** `WorkInfo.nextScheduleTimeMillis` of the periodic work, or null. */
+  /**
+   * The earliest `WorkInfo.nextScheduleTimeMillis` of the periodic work and of a failed "now"
+   * request that waits for its retry, or null.
+   */
   val nextRunAtMillis: Long? = null,
   val running: Boolean = false,
-  /** A [SyncScheduler.runNow] request is waiting to start. */
+  /** A [SyncScheduler.runNow] request is waiting to start (not one waiting for a retry). */
   val runNowPending: Boolean = false,
 )
 

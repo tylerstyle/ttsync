@@ -1,5 +1,6 @@
 package de.tergelius.ttsync.ui.target
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -72,6 +73,9 @@ fun TargetScreen(
     }
   }
   val requestPermission = rememberCalendarPermissionRequest { viewModel.refresh() }
+  // No way back during a switch: started again from Settings, a second switch would read the old
+  // target while the first one is still removing its copies (review 2026-11, F3).
+  BackHandler(enabled = state.saving) {}
   TargetContent(
     state = state,
     setup = setup,
@@ -132,10 +136,10 @@ fun TargetContent(
 ) {
   TtScaffold(
     title = stringResource(R.string.target_title),
-    onBack = onBack,
+    onBack = onBack.takeUnless { state.saving },
     actions = {
       if (state.permission == true) {
-        IconButton(onClick = onRefresh, enabled = !state.loading) {
+        IconButton(onClick = onRefresh, enabled = !state.loading && !state.saving) {
           Icon(
             painterResource(R.drawable.ic_refresh),
             contentDescription = stringResource(R.string.action_refresh),

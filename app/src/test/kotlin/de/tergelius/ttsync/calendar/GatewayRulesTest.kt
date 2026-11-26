@@ -26,6 +26,7 @@ class GatewayRulesTest {
     assertEquals(RowCheck.MISSING, GatewayRules.check(null, target, uuid))
     assertEquals(RowCheck.OTHER_CALENDAR, GatewayRules.check(row(ours, calendarId = 16), target, uuid))
     assertEquals(RowCheck.DELETED, GatewayRules.check(row(ours, deleted = true), target, uuid))
+    assertEquals(RowCheck.EXCEPTION, GatewayRules.check(row(ours).copy(exception = true), target, uuid))
     for (foreign in
       listOf(
         null,
@@ -55,7 +56,10 @@ class GatewayRulesTest {
   @Test
   fun preconditionSelectsOnlyTheExpectedRowOnSqlite() {
     JdbcSqlConnection.inMemory().use { sql ->
-      sql.execute("CREATE TABLE view_events (_id INTEGER PRIMARY KEY, calendar_id INTEGER, deleted INTEGER, description TEXT)")
+      sql.execute(
+        "CREATE TABLE view_events (_id INTEGER PRIMARY KEY, calendar_id INTEGER, deleted INTEGER, " +
+          "description TEXT, original_id INTEGER, original_sync_id TEXT)"
+      )
       val rows =
         listOf(
           Triple(1L, target, "Note\n[ttsync:$uuid]"), // ours
@@ -70,7 +74,10 @@ class GatewayRulesTest {
           listOf(id, cal, desc),
         )
       }
-      sql.execute("INSERT INTO view_events VALUES (6, ?, 1, ?)", listOf(target, "[ttsync:$uuid]"))
+      sql.execute("INSERT INTO view_events VALUES (6, ?, 1, ?, NULL, NULL)", listOf(target, "[ttsync:$uuid]"))
+      // R6: edited dates of a copied series; Google copied the marker into them.
+      sql.execute("INSERT INTO view_events VALUES (7, ?, 0, ?, 1, NULL)", listOf(target, "[ttsync:$uuid]"))
+      sql.execute("INSERT INTO view_events VALUES (8, ?, 0, ?, NULL, 'srv')", listOf(target, "[ttsync:$uuid]"))
       fun count(id: Long): Long =
         sql.query(
             "SELECT COUNT(*) FROM view_events WHERE ${GatewayRules.PRECONDITION}",
@@ -80,7 +87,7 @@ class GatewayRulesTest {
           }
           .single()
       assertEquals(1L, count(1))
-      for (id in 2L..6L) assertEquals("row $id", 0L, count(id))
+      for (id in 2L..8L) assertEquals("row $id", 0L, count(id))
     }
   }
 

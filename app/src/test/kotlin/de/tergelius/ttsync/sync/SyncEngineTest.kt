@@ -135,11 +135,12 @@ class SyncEngineTest {
     assertEquals("Brunch", h.gateway.rows.getValue(a1).title)
     assertTrue(h.gateway.rows.getValue(a2).deleted)
     assertEquals(setOf(A1, A3, SERIES, a4), h.copies().keys)
-    // From the mark minus the overlap, never with a stored server `since`: the three changes fill
-    // page 1 and half of page 2.
+    // From the mark minus the overlap, never with a stored server `since`. The read starts at the
+    // old mark's own event, so there are four entries: three pages of two, each after the first
+    // starting with the entry before (F7).
     assertEquals("changes:1:${known - overlap}", h.client.requests.last())
     assertEquals("1:changes since=${known - overlap}", h.client.pageRequests.first())
-    assertEquals(2, h.client.pageRequests.size)
+    assertEquals(3, h.client.pageRequests.size)
     assertFalse(h.client.requests.any { it.startsWith("events:") || it.startsWith("labels:") })
     // The new high-water mark is the newest change (the tombstone's), not a server cursor.
     assertEquals(h.client.newestChange(CAL_A), h.store.cursors.get(CAL_A)!!.highWater)
@@ -375,7 +376,9 @@ class SyncEngineTest {
 
   @Test
   fun fullRunReadsEveryBackwardPageAndRereadsTheTop() = runTest {
-    // 7 events, 2 a page: 4 pages backwards, then the top once more (EventFeed).
+    // 7 events, 2 a page. Each page after the first is asked from the oldest change time of the
+    // page before (F7), so it starts with that event again: 6 pages backwards, then the top once
+    // more (EventFeed).
     val report = h.sync().assertOk()
     assertEquals(SyncMode.FULL, report.calendars.single().mode)
     assertEquals(h.liveA, h.copies().keys)
@@ -383,16 +386,18 @@ class SyncEngineTest {
     assertEquals(
       listOf(
         "1:top",
-        "1:since=${feed[1].updatedAt - 1}",
-        "1:since=${feed[3].updatedAt - 1}",
-        "1:since=${feed[5].updatedAt - 1}",
+        "1:since=${feed[1].updatedAt}",
+        "1:since=${feed[2].updatedAt}",
+        "1:since=${feed[3].updatedAt}",
+        "1:since=${feed[4].updatedAt}",
+        "1:since=${feed[5].updatedAt}",
         "1:top",
       ),
       h.client.pageRequests,
     )
     val cursor = h.store.cursors.get(CAL_A)!!
     assertEquals(h.client.newestChange(CAL_A), cursor.highWater)
-    assertEquals(4, cursor.lastFullPages) // the feed, without the second pass
+    assertEquals(6, cursor.lastFullPages) // the feed, without the second pass
   }
 
   @Test
@@ -418,7 +423,7 @@ class SyncEngineTest {
     h.client.pageRequests.clear()
     val again = h.sync().assertOk()
     assertEquals(SyncMode.INCREMENTAL, again.calendars.single().mode)
-    assertEquals(4, h.client.pageRequests.size) // all 7 changes are within the overlap
+    assertEquals(6, h.client.pageRequests.size) // all 7 changes are within the overlap
     assertEquals(0, again.counts.writes)
   }
 
@@ -454,17 +459,17 @@ class SyncEngineTest {
 
   @Test
   fun aFullRunAtLeastEverySixHoursCatchesWhatTheChangeListMisses() = runTest {
-    h.sync().assertOk() // 4 pages
+    h.sync().assertOk() // 6 pages
     h.now += 6 * 60 * 60_000L - 60_000L
     assertEquals(SyncMode.INCREMENTAL, h.sync().assertOk().calendars.single().mode)
-    assertTrue(h.log.lines.any { it == "I calendar 1: INCREMENTAL (last FULL 359 min ago, pages=4)" })
+    assertTrue(h.log.lines.any { it == "I calendar 1: INCREMENTAL (last FULL 359 min ago, pages=6)" })
 
     h.client.purge(CAL_A, A3) // a tombstone TimeTree no longer keeps, say
     h.now += 60_000L
     val full = h.sync().assertOk()
     assertEquals(SyncMode.FULL, full.calendars.single().mode)
     assertEquals(1, full.counts.deleted)
-    assertTrue(h.log.lines.any { it == "I calendar 1: FULL (last FULL 360 min ago, pages=4)" })
+    assertTrue(h.log.lines.any { it == "I calendar 1: FULL (last FULL 360 min ago, pages=6)" })
     assertEquals(6 * 60 * 60_000L, DefaultSyncEngine.FULL_INTERVAL_MILLIS)
   }
 
@@ -477,7 +482,7 @@ class SyncEngineTest {
     assertEquals(SyncMode.INCREMENTAL, h.sync().assertOk().calendars.single().mode)
     assertEquals(3, h.store.cursors.get(CAL_A)!!.lastFullPages) // kept by INCREMENTAL runs
     assertEquals(SyncMode.FULL, h.sync(full = true).assertOk().calendars.single().mode)
-    assertEquals(4, h.store.cursors.get(CAL_A)!!.lastFullPages)
+    assertEquals(5, h.store.cursors.get(CAL_A)!!.lastFullPages) // 10 events: 3, then 2 new a page
   }
 
   @Test

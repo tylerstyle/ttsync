@@ -24,15 +24,22 @@ import de.tergelius.ttsync.R
  *   the user must fix; the next successful run clears it. (`SyncWorker` decides when.)
  * - Lost access gets one notification per TimeTree calendar with a "Remove copies" action.
  * - Texts come from string resources (en/de) and carry no event content.
- * - Without the notification permission, calls do nothing (no crash).
+ * - Without the notification permission, or with the app's notifications turned off, calls do
+ *   nothing (no crash) and the `show…` functions return false, so the caller does not record a
+ *   notification that nobody saw.
  */
 interface SyncNotifier {
-  fun showFailure(failure: SyncFailure)
+  /** @return whether the notification was posted */
+  fun showFailure(failure: SyncFailure): Boolean
 
   fun clearFailure()
 
-  /** [calendarName] is the user's own selection label, shown only in the notification. */
-  fun showAccessLost(ttCalId: Long, calendarName: String?)
+  /**
+   * [calendarName] is the user's own selection label, shown only in the notification.
+   *
+   * @return whether the notification was posted
+   */
+  fun showAccessLost(ttCalId: Long, calendarName: String?): Boolean
 
   fun clearAccessLost(ttCalId: Long)
 
@@ -61,7 +68,7 @@ class AndroidSyncNotifier(context: Context) : SyncNotifier {
   private val appContext = context.applicationContext
   private val manager = NotificationManagerCompat.from(appContext)
 
-  override fun showFailure(failure: SyncFailure) {
+  override fun showFailure(failure: SyncFailure): Boolean {
     val text = problemText(failure)
     val notification =
       NotificationCompat.Builder(appContext, SyncNotifier.CHANNEL_PROBLEMS)
@@ -75,14 +82,14 @@ class AndroidSyncNotifier(context: Context) : SyncNotifier {
         .setCategory(NotificationCompat.CATEGORY_ERROR)
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         .build()
-    post(SyncNotifier.ID_FAILURE, notification)
+    return post(SyncNotifier.ID_FAILURE, notification)
   }
 
   override fun clearFailure() {
     manager.cancel(SyncNotifier.ID_FAILURE)
   }
 
-  override fun showAccessLost(ttCalId: Long, calendarName: String?) {
+  override fun showAccessLost(ttCalId: Long, calendarName: String?): Boolean {
     val text =
       calendarName?.takeIf { it.isNotBlank() }
         ?.let { appContext.getString(R.string.notification_access_lost_text, it) }
@@ -102,7 +109,7 @@ class AndroidSyncNotifier(context: Context) : SyncNotifier {
         .setCategory(NotificationCompat.CATEGORY_STATUS)
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         .build()
-    post(id, notification)
+    return post(id, notification)
   }
 
   override fun clearAccessLost(ttCalId: Long) {
@@ -146,20 +153,28 @@ class AndroidSyncNotifier(context: Context) : SyncNotifier {
       PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-  /** Posts only with the notification permission (API 33+); otherwise silently does nothing. */
+  /**
+   * Posts only with the notification permission (API 33+) and with the app's notifications on;
+   * otherwise silently does nothing.
+   *
+   * @return whether it was posted
+   */
   @SuppressLint("MissingPermission")
-  private fun post(id: Int, notification: Notification) {
+  private fun post(id: Int, notification: Notification): Boolean {
     if (
       Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
         ContextCompat.checkSelfPermission(appContext, Manifest.permission.POST_NOTIFICATIONS) !=
           PackageManager.PERMISSION_GRANTED
     ) {
-      return
+      return false
     }
-    try {
+    if (!manager.areNotificationsEnabled()) return false
+    return try {
       manager.notify(id, notification)
+      true
     } catch (_: SecurityException) {
       // Permission revoked in between: nothing to show.
+      false
     }
   }
 

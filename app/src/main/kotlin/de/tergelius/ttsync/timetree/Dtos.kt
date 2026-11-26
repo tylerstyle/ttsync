@@ -169,9 +169,11 @@ data class TtEvent(
   @SerialName("created_at") val createdAt: Long? = null,
   /**
    * User ids of the event's attendees ("Attendees" in TimeTree), matching
-   * [TtCalendarUser.userId]. Lenient: ids that are not numbers are dropped, never the event.
+   * [TtCalendarUser.userId]. Null if unknown: the field is missing, not an array, or holds an id
+   * that is not a number. That never costs the event, but an attendee filter cannot judge it then
+   * (`EventFilter.canJudge`).
    */
-  @Serializable(with = LenientLongList::class) val attendees: List<Long> = emptyList(),
+  @Serializable(with = LongListOrNull::class) val attendees: List<Long>? = null,
   /** User id of whoever created the event; null if unknown. Lenient like [attendees]. */
   @SerialName("author_id")
   @Serializable(with = LenientLong::class)

@@ -87,4 +87,24 @@ class SettingsModelsTest {
   fun credentialsAreRedacted() {
     assertFalse(Credentials("me@example.org", "hunter2", "cookie").toString().contains("hunter2"))
   }
+
+  @Test
+  fun pausedCalendarsFollowTheCalendarsAReportLists() {
+    fun report(vararg calendars: Pair<Long, CalendarState>) =
+      SyncReport(
+        runId = "r",
+        trigger = SyncTrigger.PERIODIC,
+        startedAt = 0,
+        finishedAt = 1,
+        calendars = calendars.map { (id, state) -> CalendarReport(id, mode = null, state = state) },
+      )
+    val paused = CalendarState.PAUSED
+    val active = CalendarState.ACTIVE
+    assertEquals(setOf(1L), SyncStatus.pausedAfter(emptySet(), report(1L to paused, 2L to active)))
+    // A run that failed early lists no calendar: nothing changes (review 2026-11, M3).
+    assertEquals(setOf(1L), SyncStatus.pausedAfter(setOf(1), report()))
+    // Listed only in part: the others stay as they were.
+    assertEquals(setOf(1L, 2L), SyncStatus.pausedAfter(setOf(1), report(2L to paused)))
+    assertEquals(emptySet<Long>(), SyncStatus.pausedAfter(setOf(1), report(1L to active)))
+  }
 }

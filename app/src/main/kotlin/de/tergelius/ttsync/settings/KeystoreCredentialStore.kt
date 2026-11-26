@@ -11,6 +11,8 @@ import java.io.IOException
 import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.security.ProviderException
+import java.security.UnrecoverableKeyException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -30,8 +32,11 @@ import kotlinx.serialization.json.Json
  *   runs must decrypt without the user.
  * - `noBackupFilesDir/`[FILE_NAME] holds `[12-byte IV][ciphertext + 16-byte GCM tag]` of the JSON
  *   `{email, password, sessionId}`, written with [AtomicFile], so a crash never leaves half a file.
- * - If the file does not decrypt or decode (a lost key, a corrupt file), the file and the key are
- *   wiped and [load] returns null: the app asks for sign-in again.
+ * - If the file is lost for good (no key, a key that no longer fits, a corrupt file), the file and
+ *   the key are wiped and [load] returns null: the app asks for sign-in again.
+ * - Any other Keystore failure may pass (the Keystore service can be busy or restarting): [load]
+ *   returns null for this call only, keeps the file and tries again at the next call (review
+ *   2026-11, F4).
  * - [clear] (sign-out) deletes the file and the key alias.
  *
  * The decrypted value is cached in memory after the first [load], so the client's per-request
@@ -89,9 +94,10 @@ class KeystoreCredentialStore internal constructor(
     cache?.let {
       return it.credentials
     }
-    val loaded = io { read() }
-    cache = Loaded(loaded)
-    return loaded
+    // Null: unreadable right now. Nothing is cached, so the next call reads again.
+    val loaded = io { read() } ?: return null
+    cache = loaded
+    return loaded.credentials
   }
 
   private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
@@ -99,28 +105,72 @@ class KeystoreCredentialStore internal constructor(
   // ---------------------------------------------------------------------------------------------
   // Blocking helpers (called on Dispatchers.IO with the mutex held)
 
-  private fun read(): Credentials? {
+  /** What the file holds, or null if the Keystore cannot tell right now (nothing is wiped then). */
+  private fun read(): Loaded? {
     val blob =
       try {
         file.readFully()
       } catch (_: FileNotFoundException) {
-        return null
+        return Loaded(null)
+      }
+    val plain =
+      try {
+        decrypt(blob)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        if (!isLostForGood(e)) {
+          log.w("credentials not readable now (${e.javaClass.simpleName}); kept, trying again later")
+          return null
+        }
+        return lost(e)
       }
     return try {
-      val plain = decrypt(blob)
-      try {
-        decode(plain)
-      } finally {
-        plain.fill(0)
-      }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      log.w("credentials unreadable (${e.javaClass.simpleName}); wiped, sign-in needed")
-      wipe()
-      null
+      Loaded(decode(plain))
+    } catch (e: IllegalArgumentException) {
+      // Decrypted but not our JSON (SerializationException is one of these): a corrupt file.
+      lost(e)
+    } finally {
+      plain.fill(0)
     }
   }
+
+  private fun lost(e: Exception): Loaded {
+    log.w("credentials unreadable (${e.javaClass.simpleName}); wiped, sign-in needed")
+    wipe()
+    return Loaded(null)
+  }
+
+  /**
+   * True if no later attempt can decrypt the file: it is too short or the key is gone ([Lost]), the
+   * key does not fit or the file is damaged (the GCM tag fails), or Android invalidated the key.
+   * Everything else, such as a `ProviderException` or `KeyStoreException` of a busy Keystore, may
+   * pass.
+   *
+   * `UnrecoverableKeyException` alone says nothing: since Android 12 it wraps every Keystore error
+   * of `getKey`, a locked or busy Keystore included. It counts only if its cause says that the
+   * failure is not transient (`android.security.KeyStoreException.isTransientFailure`, Android 13).
+   * A file that is kept although its key is gone costs nothing: the next sign-in replaces both.
+   */
+  private fun isLostForGood(e: Exception): Boolean =
+    e is Lost ||
+      e is AEADBadTagException ||
+      (e is UnrecoverableKeyException && causeIsPermanent(e)) ||
+      // By name: android.* classes are not on the classpath of the JVM tests.
+      e.javaClass.name == "android.security.keystore.KeyPermanentlyInvalidatedException"
+
+  /** By reflection: the method is on an android.* class and exists from API 33 on. */
+  private fun causeIsPermanent(e: Exception): Boolean {
+    val cause = e.cause ?: return false
+    return try {
+      cause.javaClass.getMethod("isTransientFailure").invoke(cause) == false
+    } catch (_: ReflectiveOperationException) {
+      false
+    }
+  }
+
+  /** The file can never be decrypted. */
+  private class Lost(message: String) : GeneralSecurityException(message)
 
   private fun write(credentials: Credentials) {
     val plain = encode(credentials)
@@ -146,10 +196,13 @@ class KeystoreCredentialStore internal constructor(
     }
   }
 
-  /** A broken key: replace it once. The old file is unreadable with the new key, which is fine. */
+  /**
+   * A broken key: replace it once. The old file is unreadable with the new key, which is fine: it
+   * is about to be overwritten. The old key is not deleted first; [CredentialKeys.create] replaces
+   * it, so if no new key can be made the old one, and with it the old file, stays usable.
+   */
   private fun retryWithNewKey(plain: ByteArray, cause: Exception): ByteArray {
     log.w("credential key unusable (${cause.javaClass.simpleName}); creating a new one")
-    keys.delete()
     return encrypt(plain, keys.create())
   }
 
@@ -168,8 +221,8 @@ class KeystoreCredentialStore internal constructor(
   }
 
   private fun decrypt(blob: ByteArray): ByteArray {
-    if (blob.size <= IV_BYTES + TAG_BITS / 8) throw GeneralSecurityException("file too short")
-    val key = keys.existing() ?: throw GeneralSecurityException("no key")
+    if (blob.size <= IV_BYTES + TAG_BITS / 8) throw Lost("file too short")
+    val key = keys.existing() ?: throw Lost("no key")
     val cipher = Cipher.getInstance(TRANSFORMATION)
     cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, blob, 0, IV_BYTES))
     return cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES)

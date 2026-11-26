@@ -14,6 +14,14 @@ data class CalendarInfo(
   val syncEvents: Boolean,
   val visible: Boolean,
   val color: Int?,
+  /**
+   * `Calendars.OWNER_ACCOUNT`: for a Google calendar its id on Google's server (the account's
+   * address for the main calendar, `…@group.calendar.google.com` and the like for the others),
+   * one per calendar of an account. Unlike `_ID` it survives a reset of the phone's calendar
+   * storage, and renaming the calendar does not change it. Null if the provider has none.
+   * (`Calendars._SYNC_ID` is empty for Google calendars: device check 2026-11-26.)
+   */
+  val serverId: String? = null,
 ) {
   /** Listed on the Target screen and required on every run: Google, writable, synced. */
   val isEligibleTarget: Boolean
@@ -32,15 +40,23 @@ data class CalendarInfo(
 }
 
 /**
- * The calendar chosen on the Target screen, identified by `_ID` **and** account. It is stored in
- * settings and re-checked against the provider before every run and every write batch (DESIGN.md
- * section 5, step 1 and R3): if the `_ID` now belongs to another account, nothing is written.
+ * The calendar chosen on the Target screen, identified by `_ID`, account **and** Google's server
+ * id. It is stored in settings and re-checked against the provider before every run and every
+ * write batch (DESIGN.md section 5, step 1 and R3): if the `_ID` now belongs to another account or
+ * to another calendar, nothing is written.
+ *
+ * The phone numbers its calendars anew when its calendar storage is reset, so an `_ID` can come to
+ * mean another calendar of the same account (device test 2026-11-26, F5). [serverId] catches that.
+ * It is null in settings written before 0.2.2; the check then compares `_ID` and account only, and
+ * the engine stores the id at its next run ([withServerIdOf]). Once it is stored, a row without a
+ * server id or with another one is not the target.
  */
 @Serializable
 data class TargetCalendar(
   val calendarId: Long,
   val accountName: String,
   val accountType: String,
+  val serverId: String? = null,
 ) {
   /** Compares the stored identity with the provider's current row (null if the row is gone). */
   fun check(current: CalendarInfo?): TargetCheck =
@@ -48,17 +64,35 @@ data class TargetCalendar(
       current == null || current.id != calendarId -> TargetCheck.MISSING
       current.accountName != accountName || current.accountType != accountType ->
         TargetCheck.ACCOUNT_CHANGED
+      // The chosen calendar is not at this `_ID` any more: for the app it is gone.
+      serverId != null && current.serverId != serverId -> TargetCheck.MISSING
       current.accountType != CalendarInfo.ACCOUNT_TYPE_GOOGLE -> TargetCheck.NOT_GOOGLE
       current.accessLevel < CalendarInfo.MIN_ACCESS_LEVEL -> TargetCheck.READ_ONLY
       !current.syncEvents -> TargetCheck.SYNC_EVENTS_OFF
       else -> TargetCheck.OK
     }
 
+  /**
+   * True if [other], a row read now, is this stored calendar: `_ID` and account are equal, and so
+   * is the server id if this target has one. A target stored without a server id (before 0.2.2)
+   * equals the same row read now.
+   */
+  fun isSameCalendar(other: TargetCalendar): Boolean =
+    calendarId == other.calendarId &&
+      accountName == other.accountName &&
+      accountType == other.accountType &&
+      (serverId == null || serverId == other.serverId)
+
+  /** This target with the server id of [current], if it has none yet and [current] has one. */
+  fun withServerIdOf(current: CalendarInfo): TargetCalendar =
+    if (serverId == null && current.serverId != null) copy(serverId = current.serverId) else this
+
+  /** Redacted: the account name is an email address, and so is the server id of a main calendar. */
   override fun toString(): String = "TargetCalendar(calendarId=$calendarId, accountType=$accountType)"
 
   companion object {
     fun of(info: CalendarInfo): TargetCalendar =
-      TargetCalendar(info.id, info.accountName, info.accountType)
+      TargetCalendar(info.id, info.accountName, info.accountType, info.serverId)
   }
 }
 
@@ -66,7 +100,10 @@ data class TargetCalendar(
 enum class TargetCheck {
   OK,
 
-  /** The row is gone, e.g. the calendar was deleted on calendar.google.com. Own Status state. */
+  /**
+   * The row is gone, e.g. the calendar was deleted on calendar.google.com, or its `_ID` now holds
+   * another calendar (the phone's calendar storage was reset). Own Status state.
+   */
   MISSING,
 
   /** The `_ID` now belongs to another account (reused after a storage reset). */

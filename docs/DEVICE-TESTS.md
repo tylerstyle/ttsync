@@ -199,6 +199,39 @@ copied, then updated through Obtainium to the published 0.2.1.
 Google's sync added the target calendar's default reminder to the copies (`hasAlarm`), as in run 6;
 the app doesn't manage reminders (DESIGN.md section 4).
 
+## Run 10: fixes of the code review 2026-11-25, debug build of the working tree
+
+2026-11-26, the phone now on Android 17 (LineageOS). The build had every fix of the review except
+F1, F5, F7 and F22, which this run was to observe.
+
+| Area | Result |
+|---|---|
+| Setup, first run FULL, one copy per live in-window event | Pass |
+| F21: the sign-in screen cannot be captured (`screencap` black, blank in recents); Status can | Pass |
+| M2: "Full resync started" snackbar | Pass |
+| F2: an event moved to more than 30 days ago: Updated 1, Deleted 0, the copy has the past date; the next FULL writes nothing | Pass |
+| F8: 11 of 21 events deleted in TimeTree. FULL 1: "held until the next FULL agrees", Deleted 0. FULL 2 within 10 min: "still held". "Sync now" after 10 min runs FULL: "seen again; deleting them", Deleted 11 | Pass |
+| F3, M1: Back pressed during a target switch, both directions: the switch completes, copies moved, periodic work exists (the switch takes about 0.1 s, so no press provably fell into it) | Pass |
+| Issue #1: one "No access" notification for a calendar deleted in TimeTree; none more after a failed run or a good run; Status keeps listing it as paused after a failed run; unticking it removes the notification | Pass |
+| F17: no failure notification while the permission is revoked; one with the next failed run after it is granted again | Pass |
+| F1: edit one date of a copied series in Google Calendar | **Fault confirmed** (O2) |
+| F5: clear the phone's calendar storage | **Fault confirmed** (O3) |
+| F22 | Not applicable (Android 17) |
+| F7 | Not checkable: 38 events on one page, no two with one `updated_at` |
+| The 7 foreign events, 12 checks (after the storage reset by `_sync_id` and content) | Pass |
+
+Also seen:
+
+- **Android's own guard against mass deletes.** A target switch away from a calendar that held
+  nothing but the 10 copies deleted 10 of 10 rows there. Android then refused to sync the account's
+  calendars ("Can't sync – Attempted to delete too many Calendar.") until the user confirmed the
+  deletion in that notification, about 25 minutes later; until then the new copies were not
+  uploaded either. Deleting 11 of 20 rows did not trigger it.
+- **After a failed run** "Sync now" is disabled while the retry waits (15 min back-off), Status
+  still says "Next sync: Starting soon", and the headline says "Syncing normally" above the error.
+- After the F1 fault two cancelled exception rows (no title, no marker) stay in the target
+  calendar. The app cannot see them; they are invisible in Google Calendar.
+
 ## Bugs and fixes
 
 | ID | Severity | Problem | Fix |
@@ -214,6 +247,8 @@ the app doesn't manage reminders (DESIGN.md section 4).
 | L3 | Low | Extra space under the "Events: …" line on Sources. | 0.2.0 fix round: the line sits right under its calendar's name, like a subtitle. Verified in run 6. |
 | L4 | Low | German relative times in parentheses started with a capital: "(Vor 1 Minute)". | 0.2.0 fix round: the first letter is lower case, locale-aware: "(vor 1 Minute)"; in English "(5 minutes ago)" is unchanged and "(In 40 minutes)" becomes "(in 40 minutes)". Verified in run 6. |
 | D1 | High | Google's sync adapter restored a copy the app had just deleted (`deleted = 1`, not uploaded yet) to its unchanged server version, right after a feed sync of the target calendar. The app had dropped the mapping with the delete, so it never looked at the row again: the deleted TimeTree date stayed in Google, and a Full resync counted it as unmanaged. Seen once, in run 7; 0.2.0 had the same gap. | 0.2.1: every deleted copy is watched (`pending_delete`, schema 4) until its row is gone, and deleted again if it comes back (DESIGN.md section 5, step 6a). Verified in run 8 with the restore reproduced by hand. |
+| O2 | High | F1: when the user edits one date of a copied series in Google Calendar ("This event"), Google creates an exception row and copies the description into it, marker included. The next FULL counted it as a duplicate and deleted it; Google made that a cancelled date, so the date vanished from the calendar for good. Seen in run 10; every version so far has it. | 0.2.2: rows with `original_id` or `original_sync_id` are never the app's (DESIGN.md section 5, R6). Not verified on the phone yet. |
+| O3 | High | F5: after the phone's calendar storage was cleared, Google's sync numbered the calendars anew: the target's `_ID` then was another writable calendar of the same account. The app noticed nothing (Status "Syncing normally", the old name) and the next sync would have written every copy into the wrong calendar. Seen in run 10 (the sync was prevented by hand). | 0.2.2: the target also stores the calendar's server id; an `_ID` that holds another calendar counts as a missing target. Not verified on the phone yet. |
 | L5 | Low | Android 13+'s Settings → App languages didn't offer the app: no locale config. | 0.2.0 fix round: AGP generates one for English and German. Verified in run 6. |
 
 Other findings, no change needed: Google's sync adapter rewrites the copies after upload (EXDATE in

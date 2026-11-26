@@ -17,7 +17,9 @@ import kotlinx.serialization.Serializable
  *   wins.
  * - **Labels by id**, never by name: users rename labels, and a rename only changes the name, so a
  *   filter survives it. An event without a label never matches a label filter.
- * - **Attendees** by user id ([TtEvent.attendees]): any one of [attendeeIds] is enough.
+ * - **Attendees** by user id ([TtEvent.attendees]): any one of [attendeeIds] is enough. An event
+ *   whose attendees are unknown cannot be judged ([canJudge]); the mapper leaves it and its copy
+ *   alone.
  * - **Text**: [includeTerms] ("only if it contains …") and [excludeTerms] ("skip if it contains
  *   …") are searched in title, note and location, case-insensitive, after Unicode NFC
  *   normalization of both sides. Terms are trimmed; blank ones are ignored.
@@ -43,6 +45,13 @@ data class EventFilter(
   val isEmpty: Boolean
     get() = labelIds.isEmpty() && attendeeIds.isEmpty() && include.isEmpty() && exclude.isEmpty()
 
+  /**
+   * False if [event] cannot be judged: there is an attendee filter, and the event's attendees did
+   * not decode (TimeTree changed the field, say). [matches] would then exclude every event, and
+   * every copy of the calendar would be deleted.
+   */
+  fun canJudge(event: TtEvent): Boolean = attendeeIds.isEmpty() || event.attendees != null
+
   /** Whether [event] is copied. Only its own fields count (see the class rules). */
   fun matches(event: TtEvent): Boolean {
     val texts =
@@ -53,7 +62,7 @@ data class EventFilter(
 
     if (containsAny(exclude)) return false
     if (labelIds.isNotEmpty() && event.labelId.let { it == null || it !in labelIds }) return false
-    if (attendeeIds.isNotEmpty() && event.attendees.none { it in attendeeIds }) return false
+    if (attendeeIds.isNotEmpty() && event.attendees.orEmpty().none { it in attendeeIds }) return false
     if (include.isNotEmpty() && !containsAny(include)) return false
     return true
   }

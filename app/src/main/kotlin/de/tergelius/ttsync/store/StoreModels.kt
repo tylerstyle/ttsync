@@ -123,4 +123,10 @@ object MetaKeys {
 
   /** `EventMapper.VERSION` of the last complete run; a different value forces FULL. */
   const val MAPPER_VERSION = "mapper_version"
+
+  /**
+   * When (UTC ms) a FULL run of TimeTree calendar [ttCalId] held back a mass delete; the next FULL
+   * that comes to the same result may delete. See `SyncEngine`'s mass-delete guard.
+   */
+  fun massDeleteSeen(ttCalId: Long): String = "mass_delete_seen:$ttCalId"
 }

@@ -25,6 +25,7 @@ import de.tergelius.ttsync.timetree.TtError
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 /**
@@ -43,6 +44,9 @@ import kotlinx.coroutines.withContext
  *   as [RemovalReport.failure] instead of an exception (phase 5 review, SHOULD-FIX-1).
  * - Every change that needs new copies ends with [SyncScheduler.runNow] `(full = true, SETUP)`.
  * - Engine calls run on [io]: the engine's stores block.
+ * - An action that deletes copies runs to its end even if the screen that started it is left
+ *   (`NonCancellable`): cancelled half-way, it would leave copies partly deleted and the periodic
+ *   work cancelled (review 2026-11, F3).
  */
 class UserActions(
   private val client: TimeTreeClient,
@@ -133,13 +137,13 @@ class UserActions(
    *
    * @throws RemovalFailedException if the copies could not be removed; nothing was changed.
    */
-  suspend fun saveSources(selected: List<SourceCalendar>): SetupStep {
+  suspend fun saveSources(selected: List<SourceCalendar>): SetupStep = withContext(NonCancellable) {
     require(selected.isNotEmpty()) { "select at least one calendar" }
     val change = sourceChange(selected)
     if (change.hasTarget && change.removed.isNotEmpty()) {
       val report = withContext(io) { engine.deselect(change.removed.map { it.id }.toSet()) }
       report.failure?.let { throw RemovalFailedException(it) }
-      change.removed.forEach { notifier.clearAccessLost(it.id) }
+      forgetAccessLost(change.removed.map { it.id }.toSet())
     }
     settings.setSources(selected)
     if (change.hasTarget) {
@@ -152,7 +156,14 @@ class UserActions(
         scheduler.runNow(full = true, trigger = SyncTrigger.SETUP)
       }
     }
-    return currentStep()
+    currentStep()
+  }
+
+  /** Deselected calendars: their access-lost notifications go, and the status forgets them. */
+  private suspend fun forgetAccessLost(ids: Set<Long>) {
+    if (ids.isEmpty()) return
+    ids.forEach(notifier::clearAccessLost)
+    status.forgetCalendars(ids)
   }
 
   /**
@@ -162,11 +173,13 @@ class UserActions(
    * mappings cleared, and only then is the new target saved. If that removal fails, the old target
    * stays and keeps syncing, and [TargetChange.failed] is set.
    */
-  suspend fun setTarget(info: CalendarInfo): TargetChange {
+  suspend fun setTarget(info: CalendarInfo): TargetChange = withContext(NonCancellable) { changeTarget(info) }
+
+  private suspend fun changeTarget(info: CalendarInfo): TargetChange {
     val current = settings.current()
     val newTarget = TargetCalendar.of(info)
     val old = current.target
-    if (old == newTarget) {
+    if (old != null && old.isSameCalendar(newTarget)) {
       settings.setTarget(newTarget, info.displayName)
       return TargetChange(removal = null, oldCopiesLeft = false, next = currentStep())
     }
@@ -229,15 +242,15 @@ class UserActions(
    * engine then drops them from the selection. With no calendar left the periodic work is
    * cancelled. If the removal fails ([RemovalReport.failure]), the calendars stay selected.
    */
-  suspend fun removePaused(ids: Set<Long>): RemovalReport {
+  suspend fun removePaused(ids: Set<Long>): RemovalReport = withContext(NonCancellable) {
     val report = withContext(io) { engine.deselect(ids) }
-    if (report.failure != null) return report
-    ids.forEach(notifier::clearAccessLost)
+    if (report.failure != null) return@withContext report
+    forgetAccessLost(ids)
     val sources = settings.current().sources
     val remaining = sources.filter { it.id !in ids }
     if (remaining.size != sources.size) settings.setSources(remaining)
     if (remaining.isEmpty()) scheduler.cancelAll()
-    return report
+    report
   }
 
   /**
@@ -245,7 +258,9 @@ class UserActions(
    * clears the selection, so setup continues at Sources. The target and sign-in are kept. If the
    * removal fails ([RemovalReport.failure]), the selection stays and syncing goes on.
    */
-  suspend fun removeAllCopies(): RemovalReport {
+  suspend fun removeAllCopies(): RemovalReport = withContext(NonCancellable) { removeEveryCopy() }
+
+  private suspend fun removeEveryCopy(): RemovalReport {
     val current = settings.current()
     scheduler.cancelAll()
     val target = current.target
@@ -271,7 +286,7 @@ class UserActions(
       return report
     }
     notifier.clearFailure()
-    ids.forEach(notifier::clearAccessLost)
+    forgetAccessLost(ids)
     return report
   }
 
@@ -280,12 +295,15 @@ class UserActions(
    * else happens: the sign-in, settings and selection stay, syncing goes on, and the failed report
    * is returned (or the error thrown) so the user can retry or keep the copies. Then work is
    * cancelled and everything is wiped: credentials and key, settings, status, `SyncDb` and the
-   * debug dumps. The wipe is best effort: every step runs, and the first failure is thrown at the
-   * end.
+   * debug dumps. The wipe waits for a run that is still going on ([SyncEngine.exclusive]), so that
+   * run cannot write into what was just wiped (review 2026-11, F18). It is best effort: every step
+   * runs, and the first failure is thrown at the end.
    *
    * @return the removal report, or null if no copies were removed; check [RemovalReport.failure].
    */
-  suspend fun signOut(removeCopies: Boolean): RemovalReport? {
+  suspend fun signOut(removeCopies: Boolean): RemovalReport? = withContext(NonCancellable) { signOutNow(removeCopies) }
+
+  private suspend fun signOutNow(removeCopies: Boolean): RemovalReport? {
     val current = settings.current()
     scheduler.cancelAll()
     val removal =
@@ -308,12 +326,16 @@ class UserActions(
         if (failure == null) failure = e
       }
     }
-    step { credentials.clear() }
-    step { settings.clear() }
-    step { status.clear() }
-    step { withContext(io) { wipeLocalFiles() } }
-    step { notifier.clearFailure() }
-    current.sources.forEach { source -> step { notifier.clearAccessLost(source.id) } }
+    withContext(io) {
+      engine.exclusive {
+        step { credentials.clear() }
+        step { settings.clear() }
+        step { status.clear() }
+        step { wipeLocalFiles() }
+        step { notifier.clearFailure() }
+        current.sources.forEach { source -> step { notifier.clearAccessLost(source.id) } }
+      }
+    }
     failure?.let { throw it }
     return removal
   }

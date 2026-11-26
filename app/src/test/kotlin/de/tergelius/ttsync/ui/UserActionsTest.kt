@@ -17,6 +17,9 @@ import de.tergelius.ttsync.ui.UiTestGraph.Companion.SIGNED_IN
 import de.tergelius.ttsync.ui.UiTestGraph.Companion.calendar
 import de.tergelius.ttsync.ui.UiTestGraph.Companion.target
 import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -250,13 +253,15 @@ class UserActionsTest {
       listOf(
         "scheduler.cancelAll",
         "engine.removeAllCopies(15)",
+        // The wipe runs under the engine's lock: no run is going on while it happens (F18).
+        "engine.exclusive",
         "credentials.clear",
         "settings.clear",
         "status.clear",
         "wipeLocalFiles",
         "notifier.clearFailure",
       ),
-      g.calls.log.take(7),
+      g.calls.log.take(8),
     )
     assertEquals(SetupStep.LOGIN, g.actions.currentStep())
   }
@@ -278,8 +283,42 @@ class UserActionsTest {
   fun signOutWithoutRemovalLeavesTheCopies() = runTest {
     val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
     assertNull(g.actions.signOut(removeCopies = false))
-    assertTrue(g.calls.log.none { it.startsWith("engine.") })
+    // No removal, but the wipe still waits for a running sync (review 2026-11, F18).
+    assertEquals(listOf("engine.exclusive"), g.calls.log.filter { it.startsWith("engine.") })
+    assertTrue(g.calls.log.indexOf("engine.exclusive") < g.calls.log.indexOf("credentials.clear"))
     assertNull(g.credentials.stored)
+  }
+
+  @Test
+  fun aTargetSwitchGoesOnWhenItsScreenIsLeft() = runTest {
+    // Review 2026-11, F3: cancelled half-way, the switch left the periodic work cancelled.
+    val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)
+    g.gateway.calendars = listOf(calendar(15, "TimeTree"), calendar(16, "Other"))
+    val gate = CompletableDeferred<Unit>()
+    g.engine.beforeRemoval = { gate.await() }
+    val screen = launch { g.actions.setTarget(calendar(16, "Other")) }
+    runCurrent()
+    assertEquals(listOf("scheduler.cancelAll", "engine.removeAllCopies(15)"), g.calls.log)
+
+    screen.cancel() // the user leaves the Target screen
+    gate.complete(Unit)
+    screen.join()
+
+    assertEquals(16L, g.settings.flow.value.target?.calendarId)
+    assertEquals(
+      listOf("scheduler.updatePeriodic(HOURS_3)", "scheduler.runNow(full=true, SETUP)"),
+      g.calls.log.takeLast(2),
+    )
+  }
+
+  @Test
+  fun deselectedCalendarsAreForgottenByTheStatus() = runTest {
+    // Review 2026-11, B2: selected again while access is still lost, the calendar is notified again.
+    val status = SyncStatus(accessLostNotified = setOf(1, 2), pausedCalendars = setOf(1, 2))
+    val g = UiTestGraph(settings = configured, status = status, credentials = SIGNED_IN)
+    g.actions.removePaused(setOf(1))
+    assertEquals(setOf(2L), g.status.flow.value.accessLostNotified)
+    assertEquals(setOf(2L), g.status.flow.value.pausedCalendars)
   }
 
   @Test

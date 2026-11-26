@@ -41,6 +41,8 @@ import kotlinx.coroutines.withContext
  * - **R4.** Plain `Events.CONTENT_URI`, never `CALLER_IS_SYNCADAPTER`. Only Events rows are written,
  *   with exactly the [GatewayRules.updateValues] columns (plus `calendar_id` on insert).
  * - **R5.** [findMarkedRows] and [countForeignEvents] select `calendar_id = target`.
+ * - **R6.** [findMarkedRows] and the R2 assert select [GatewayRules.NOT_AN_EXCEPTION]; the R1
+ *   pre-read reads `original_id` and `original_sync_id`.
  */
 class ProviderCalendarGateway(context: Context) : CalendarGateway {
   private val appContext = context.applicationContext
@@ -76,20 +78,22 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
   override suspend fun countForeignEvents(calendarId: Long): Int = io {
     query(
       Events.CONTENT_URI,
-      arrayOf(Events._ID, Events.DESCRIPTION),
+      arrayOf(Events._ID, Events.DESCRIPTION, Events.ORIGINAL_ID, Events.ORIGINAL_SYNC_ID),
       "${Events.CALENDAR_ID} = ? AND ${Events.DELETED} = 0",
       arrayOf(calendarId.toString()),
     ) { cursor ->
-      Marker.parse(cursor.getStringOrNull(1))
+      // R6: an edited date of a copied series is the user's, whatever its description says.
+      Marker.parse(cursor.getStringOrNull(1)) == null || !cursor.isNull(2) || !cursor.isNull(3)
     }
-      .count { it == null }
+      .count { it }
   }
 
   override suspend fun findMarkedRows(target: TargetCalendar): List<MarkedRow> = io {
     query(
       Events.CONTENT_URI,
       arrayOf(Events._ID, Events.DESCRIPTION),
-      "${Events.CALENDAR_ID} = ? AND ${Events.DELETED} = 0 AND ${Events.DESCRIPTION} LIKE ?",
+      "${Events.CALENDAR_ID} = ? AND ${Events.DELETED} = 0 AND ${Events.DESCRIPTION} LIKE ? " +
+        "AND ${GatewayRules.NOT_AN_EXCEPTION}",
       arrayOf(target.calendarId.toString(), Marker.LIKE_ANY),
       "${Events._ID} ASC",
     ) { cursor ->
@@ -206,16 +210,14 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
     }
 
   /**
-   * `requestSync(account, "com.android.calendar", {EXPEDITED, MANUAL})`, best effort. The engine
-   * calls it only while Google sync is not known to be off, because a manual request would override
-   * the user's sync switches. For an account the app cannot see it does nothing (Android 13+).
+   * `requestSync(account, "com.android.calendar", {EXPEDITED})`, best effort. Without
+   * `SYNC_EXTRAS_MANUAL` on purpose: a manual request runs even if the user switched the account's
+   * calendar sync off, and before Android 13 the app often cannot see that switch for a Google
+   * account (review 2026-11, F22). A plain request obeys the switches. For an account the app
+   * cannot see it does nothing (Android 13+).
    */
   override fun requestUpload(target: TargetCalendar) {
-    val extras =
-      Bundle().apply {
-        putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
-        putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
-      }
+    val extras = Bundle().apply { putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true) }
     ContentResolver.requestSync(target.account(), CalendarContract.AUTHORITY, extras)
   }
 
@@ -234,7 +236,14 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
     for (chunk in ids.distinct().chunked(READ_CHUNK)) {
       query(
         Events.CONTENT_URI,
-        arrayOf(Events._ID, Events.CALENDAR_ID, Events.DELETED, Events.DESCRIPTION),
+        arrayOf(
+          Events._ID,
+          Events.CALENDAR_ID,
+          Events.DELETED,
+          Events.DESCRIPTION,
+          Events.ORIGINAL_ID,
+          Events.ORIGINAL_SYNC_ID,
+        ),
         "${Events._ID} IN (${chunk.joinToString(",") { "?" }})",
         chunk.map { it.toString() }.toTypedArray(),
       ) { cursor ->
@@ -243,6 +252,7 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
           calendarId = cursor.getLong(1),
           deleted = cursor.getInt(2) != 0,
           description = cursor.getStringOrNull(3),
+          exception = !cursor.isNull(4) || !cursor.isNull(5),
         )
       }
         .forEach { rows[it.eventId] = it }
@@ -264,6 +274,7 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
         syncEvents = c.getInt(5) == 1,
         visible = c.getInt(6) == 1,
         color = if (c.isNull(7)) null else c.getInt(7),
+        serverId = c.getStringOrNull(8)?.takeIf { it.isNotEmpty() },
       )
     }
 
@@ -299,6 +310,7 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
         Calendars.SYNC_EVENTS,
         Calendars.VISIBLE,
         Calendars.CALENDAR_COLOR,
+        Calendars.OWNER_ACCOUNT,
       )
 
     fun eventUri(eventId: Long) = ContentUris.withAppendedId(Events.CONTENT_URI, eventId)

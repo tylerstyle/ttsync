@@ -119,6 +119,15 @@ All requests go to `https://timetreeapp.com/api/v1` with the headers `X-Timetree
   than one page, it reads the top once more, down to 2 min below the newest change it saw, so an event
   edited during the read (it moves to the top, possibly out of a page not read yet) does not look
   deleted.
+  Equal change times (review 2026-11, F7): the server's cursor, oldest − 1, would skip events that
+  share the page's oldest `updated_at` but did not fit on the page. So the app asks the next page
+  from `since = oldest` itself; the page then starts with the last event again and brings the
+  others of that millisecond. If a whole page has one `updated_at`, the read follows the server's
+  cursor and is not complete (nothing is deleted by absence). `ChangeFeed` does the same forwards
+  (`since = newest`); at a whole page of one `updated_at` it follows the server's cursor and logs
+  it (not "unusable": with the FULL unable to prove absence too, no deletion would arrive any more).
+  Not verified against the server: no test calendar had two events with one `updated_at`, and none
+  had more than one page.
 - **Events, INCREMENTAL (0.2.1).** `GET /calendar/{id}/events?since=N` (`ChangeFeed`). Device probe
   2026-11-17:
   - The list holds the same live events (identical JSON) **and the deleted ones as tombstones**:
@@ -155,7 +164,7 @@ All requests go to `https://timetreeapp.com/api/v1` with the headers `X-Timetree
 | Signal | Error | Reaction |
 |---|---|---|
 | login `-702` | `AuthRejected` | Wrong password or a temporary block. No automatic login for 6 h. A second one in a row stops automatic logins until the user signs in. Notify. |
-| `-495`, HTTP 429 | `RateLimited` | Retry after at least 30 min, or after `Retry-After`. |
+| `-495`, HTTP 429 | `RateLimited` | Retry after at least 30 min, or after `Retry-After`, at most 24 h. A stored back-off further ahead than that is ignored. |
 | 401 right after login | `AuthRejected` | As above. |
 | calendar missing or deactivated, or 403/404 on its events | `AccessLost` | Pause that calendar and stop all its requests. Keep its copies (user decision). Notify. |
 | 5xx, IO error, timeout | `Transient` | Retry. |
@@ -173,7 +182,10 @@ release builds it does nothing.
   (0.2.0) live events that the calendar's filter excludes, which the filter checks last.
 
 Events outside the window (`endAt` before today − 30 days) are not in the map at all, so they are never
-touched.
+touched. One exception: an event whose copy is still in the window (`MappingInput.copiesInWindow`,
+the mapped uuids with `mapping.end_at` in the window) is mapped once more, so an event moved into
+the past, or a series ended in the past, takes its copy along. After that write the mapping's
+`end_at` is old too and the pair is left alone.
 
 | Column | Value |
 |---|---|
@@ -330,7 +342,10 @@ changes the BLOCKER-2 decision of the design review (section 14); the owner appr
 
 **Lenient decoding.** The fields only the filters use (a label's colours and order, a calendar's
 members, an event's attendees and author) decode leniently: a value that doesn't decode becomes
-null, and a list keeps the elements that do. A strict field in an unexpected shape would mark the
+null, and a list keeps the elements that do. An event's `attendees` are the exception among the
+lists: missing, not a list, or with an element that is no number, they are null ("unknown"), and an
+attendee filter leaves such an event alone (no write, no delete, counted as `unjudged`). "No
+attendees" would make every event fail the filter if TimeTree changed the field's shape. A strict field in an unexpected shape would mark the
 event as malformed and skip it for good, or fail `GET /calendars` with `ApiChanged` so that no run
 succeeds; neither is acceptable for data the copies hardly depend on. Labels cached by 0.1.x
 (`cursor.labels_json`) have no colours and decode too; the next FULL refreshes them.
@@ -363,11 +378,14 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
 1. **Preconditions.**
    - The app has calendar permission.
    - The target calendar still has the same `_ID`, `ACCOUNT_NAME` and `ACCOUNT_TYPE=com.google`, with
-     access ≥ 500 and `SYNC_EVENTS=1`.
+     access ≥ 500 and `SYNC_EVENTS=1`, and (0.2.2) the same server id (`Calendars.OWNER_ACCOUNT`): the
+     phone numbers its calendars anew when its calendar storage is reset, so the `_ID` alone can
+     come to mean another calendar of the same account (device run 10). That case counts as a
+     missing target.
    - Credentials are stored.
 
    If one fails, stop with an error the user must act on. A missing target calendar (for example, deleted
-   on calendar.google.com) gets its own Status state, "Target calendar was deleted", with a button to the
+   on calendar.google.com) gets its own Status state, "Target calendar is gone", with a button to the
    Target screen.
 
    Also check `ContentResolver.getMasterSyncAutomatically()` and
@@ -404,6 +422,15 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
      re-inserts it if not.
    - Never touched: uuids not in the `Desired` map (out of window), mappings with an old `end_at`, and
      anything belonging to a paused calendar.
+   - Mass-delete guard: a FULL run with an unchanged filter that would delete 10 or more copies of
+     a calendar, and more than half of its in-window copies, deletes none of them. It stores the
+     time (`meta` key `mass_delete_seen:<calendar>`) and leaves `last_full_at` empty, so the next run
+     is FULL again. If a run at least 10 minutes and at most a day later comes to the same result,
+     it deletes. The held run changes neither the snapshots nor the high-water mark. A cut-off or
+     empty answer from TimeTree therefore costs no copies; emptying a calendar on purpose takes one
+     sync more.
+   - A FULL read whose feed was out of order, that skipped an entry it could not name, or that met a
+     whole page of one `updated_at` (section 3) proves no absence: it deletes nothing for missing uuids and does not move the high-water mark forward.
 6a. **Deleted copies that came back** (0.2.1, device test run 7). A verified delete only marks the row
    `deleted = 1`; Google's sync adapter uploads the delete later, and on the phone it once restored
    such a row (`deleted = 0`, unchanged, uploaded) before uploading the delete. Without a mapping the
@@ -426,7 +453,8 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
    back then) or with "Remove all copies".
 6. **Adoption scan** (in FULL, after a crash, or with an empty mapping table). It runs after mapping
    and before the diff's writes, and it builds the marker index the diff uses. This step only adopts.
-   Query `calendar_id=target AND deleted=0 AND description LIKE '%[ttsync:%'` and parse the last line.
+   Query `calendar_id=target AND deleted=0 AND description LIKE '%[ttsync:%'`, without exceptions
+   of recurring events (R6), and parse the last line.
    - The uuid is `Write` in an active calendar and has no mapping: adopt the row with `spec_hash=""`, so
      the diff brings it up to date with one verified update.
    - Several rows for a uuid that is live and active: keep the lowest `_ID` and delete the others with
@@ -447,13 +475,20 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
   storage reset and markers removed by users.
 - **R2.** Never update or delete with a selection over the whole table. Every operation targets
   `ContentUris.withAppendedId(Events.CONTENT_URI, id)`. A selection is used only as a precondition:
-  `_id=? AND calendar_id=? AND deleted=0 AND description LIKE '%[ttsync:<uuid>]'` with
-  `withExpectedCount(1)`. If a precondition fails, the whole chunk aborts. The engine then replays that
+  `_id=? AND calendar_id=? AND deleted=0 AND description LIKE '%[ttsync:<uuid>]' AND original_id IS
+  NULL AND original_sync_id IS NULL` with `withExpectedCount(1)`. If a precondition fails, the whole chunk aborts. The engine then replays that
   chunk one operation at a time, and the failing operation goes back through adopt-or-insert.
 - **R3.** Insert only into the target calendar, after the step 1 checks.
 - **R4.** Never use `CALLER_IS_SYNCADAPTER`. Never write Attendees, Reminders, ExtendedProperties or
   Calendars.
 - **R5.** Every query for our rows is limited to `calendar_id = target`.
+- **R6 (0.2.2).** A row with `original_id` or `original_sync_id` is never ours. When the user edits
+  one date of a copied series in Google Calendar ("only this event"), Google creates such a row and
+  copies the description into it, marker included. Before 0.2.2 the adoption scan took it for a
+  duplicate and deleted it, and Google turned that into a cancelled date: the date vanished from
+  the calendar (device run 10). Now the scan leaves such rows out, the R1 check refuses them
+  (`EXCEPTION`) and the R2 precondition excludes them. They belong to the user; when the app
+  deletes their series row, the provider and Google decide what becomes of them.
 
 Known v1 behaviour (device test): TimeTree's default labels have empty names (the app shows them
 localized), so in 0.1.x they added no `Label:` line; only renamed labels did. Since 0.2.0 (B3) an
@@ -528,7 +563,7 @@ Status.
      never fires without Autostart there.
    - The user can skip, but Status then shows a warning.
 5. **Status** (home):
-   - The state: OK, running, needs attention, paused, or "Target calendar was deleted" (with a button
+   - The state: OK, running, needs attention, paused, or "Target calendar is gone" (with a button
      to Target).
    - Last successful sync, shown in red when it is more than 24 h ago, and the next run
      (`WorkInfo.nextScheduleTimeMillis`).
@@ -894,3 +929,40 @@ From the second review ([reviews/0.2.1-review-2.md](reviews/0.2.1-review-2.md)) 
 | Removal actions aren't watched; a delete that finds its row already deleted wasn't either | The latter is watched now; the former is documented (delete by hand or "Remove all copies"). | 5 (6a) |
 | 6a ignored unreadable events and the window | Unreadable: it waits. The window: documented, a re-delete repeats an earlier in-window delete. | 5 (6a) |
 | Tests and docs | Added: the cases above, restores in the random safety test, section 10, the engine's safety contract. | 10 |
+
+### Code review 2026-11-25
+
+Findings F1–F23, B1–B3 (android-claude) and M1–M6 (agy's re-check). Fixed without a device:
+
+| Finding | Outcome | Where |
+|---|---|---|
+| F2: an event moved before the window kept its old copy | Mapped once more while its copy is in the window. | 4 |
+| F3, M1: leaving a screen cancelled a target switch or removal half-way | These actions run to their end (`NonCancellable`), and Target and Sources have no way back while they save. | 7 |
+| F4: any Keystore error wiped the sign-in | Only a lost key or an undecryptable file does; other errors (an `UnrecoverableKeyException` without a permanent cause included) leave the file and are retried. | 6 |
+| F6, F19, F20: release and device scripts | The debug-string check can fail now; the signing key is compared with RELEASING.md; no exit on a calendar without other rows. | 11 |
+| F8: no guard against a mass delete | Unknown attendees leave the event alone; the mass-delete guard. | 4a, 5 |
+| F9, F14: an unordered or incomplete FULL | Not complete; the high-water mark stays. | 3, 5 |
+| F10, F11, M5: back-off | `Retry-After` capped at 24 h; the pacer's clock counts deep sleep; a stored back-off too far ahead is ignored. | 3 |
+| F12: redirects | Requests to another host than the API's are refused. | 3 |
+| F13, F15 | Dropped recurrence lines of edited occurrences are counted; the FULL check of mapped rows is keyed by uuid. | 4, 5 |
+| F16, F17, B1, B3, M6: worker bookkeeping | One worker at a time; a notification counts as shown only if it was posted; an empty selection forgets nothing. | 9 |
+| F18: sign-out during a run | The wipe waits for the run. | 6 |
+| F21 | The sign-in screen's window is `FLAG_SECURE`. | 6, 7 |
+| B2, M3: paused calendars | Deselecting forgets the calendar at once; Status keeps the paused calendars after a run that failed early. | 7, 9 |
+| M2, M4 | The "resync started" snackbar is shown; no reload of the calendar list during a switch. | 7 |
+
+Fixed after the device session of 2026-11-26 (DEVICE-TESTS.md, run 10):
+
+| Finding | Outcome | Where |
+|---|---|---|
+| F1: the edited date of a copied series was deleted as a duplicate, and the date vanished | Confirmed on the phone. Rows with `original_id` or `original_sync_id` are never ours (R6). | 5 |
+| F5: after a reset of the phone's calendar storage the target's `_ID` was another calendar of the same account, and the app would have written into it | Confirmed on the phone. The target also stores Google's server id of the calendar (`Calendars.OWNER_ACCOUNT`; `Calendars._SYNC_ID` is empty for Google calendars); if the `_ID` holds another calendar or one without that id, the target counts as gone: nothing is written and Status asks to choose it again. A target stored by an older version gets the id at its next run. | 5 (step 1, R3), 7 |
+| F7: events sharing one `updated_at` across a page boundary | Not checkable on the server. Defensive: pages overlap by the boundary's change time; a whole page of one change time proves no absence. | 3 |
+| F22: a manual `requestSync` could run although the user had switched the account's calendar sync off | Not checkable (the phone runs Android 17; it concerns Android 8–12). The request is no longer a manual one, so it obeys the switches everywhere. | 5 |
+
+agy reviewed the fixes (no blockers): the held mass delete kept neither snapshots nor
+mark, a notification flag could stay set for a problem never shown, `UnrecoverableKeyException`
+still wiped on Android 12+, and Back was possible during a switch. All fixed; known and accepted:
+the worker's bookkeeping after a run is not under the engine's lock (a sign-out in that instant can
+be followed by one late notification), and a new key whose first write fails leaves an unreadable
+file (the next sign-in replaces it).

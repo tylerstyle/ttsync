@@ -13,6 +13,8 @@ import de.tergelius.ttsync.settings.SyncStatus
 import de.tergelius.ttsync.store.CalendarState
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -25,6 +27,8 @@ import kotlinx.coroutines.withContext
  *   [SyncScheduler.MAX_ATTEMPTS]. Any other finished run gives `Result.success()` with the problem
  *   in the output data: the outcome is recorded in `StatusRepository` and shown from there, and a
  *   failed result would also fail a "now" request appended behind this one.
+ * - One worker at a time: periodic and "now" work can overlap, and the second one waits until the
+ *   first has finished its bookkeeping.
  * - Notifications: the next success clears the failure notification; a failure shows it when
  *   [SyncStatus.shouldNotifyFailure] says so, once per problem. A calendar that became paused gets
  *   its access-lost notification once. When every selected calendar is paused, the periodic work
@@ -40,39 +44,47 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     val trigger = SyncTrigger.entries.firstOrNull { it.name == triggerName } ?: SyncTrigger.PERIODIC
     val full = inputData.getBoolean(KEY_FULL, false)
     return withContext(Dispatchers.IO) {
-      val before =
-        try {
-          graph.statusRepository.current()
-        } catch (e: CancellationException) {
-          throw e
-        } catch (e: Exception) {
-          log.w("worker: status unreadable (${e.javaClass.simpleName})")
-          SyncStatus()
-        }
-      val request =
-        SyncRequest(
-          trigger = trigger,
-          forceFull = full,
-          runId = SyncRequest.newRunId(System.currentTimeMillis()),
-        )
-      log.i(
-        "worker: start id=${request.runId} trigger=$trigger full=$full attempt=$runAttemptCount " +
-          "work=${id.toString().take(8)}"
-      )
-      val report = graph.syncEngine.run(request)
-      afterRun(graph, before, report)
-      val failure = report.failure
-      val retry =
-        failure != null && failure.problem.retryable && runAttemptCount < SyncScheduler.MAX_ATTEMPTS
-      log.i(
-        "worker: done id=${request.runId} ok=${report.succeeded} problem=${failure?.problem} " +
-          "result=${if (retry) "retry" else "done"}"
-      )
-      when {
-        failure == null -> Result.success()
-        retry -> Result.retry()
-        else -> Result.success(workDataOf(OUT_PROBLEM to failure.problem.name))
+      // One worker at a time, from reading the status to the bookkeeping after the run. A second
+      // worker (periodic and "now" can overlap) used to read the status while the first one ran,
+      // and then notified again from that old state (review 2026-11, F16).
+      SEQUENCE.withLock { runOnce(graph, trigger, full) }
+    }
+  }
+
+  private suspend fun runOnce(graph: AppGraph, trigger: SyncTrigger, full: Boolean): Result {
+    val log = graph.log
+    val before =
+      try {
+        graph.statusRepository.current()
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        log.w("worker: status unreadable (${e.javaClass.simpleName})")
+        SyncStatus()
       }
+    val request =
+      SyncRequest(
+        trigger = trigger,
+        forceFull = full,
+        runId = SyncRequest.newRunId(System.currentTimeMillis()),
+      )
+    log.i(
+      "worker: start id=${request.runId} trigger=$trigger full=$full attempt=$runAttemptCount " +
+        "work=${id.toString().take(8)}"
+    )
+    val report = graph.syncEngine.run(request)
+    afterRun(graph, before, report)
+    val failure = report.failure
+    val retry =
+      failure != null && failure.problem.retryable && runAttemptCount < SyncScheduler.MAX_ATTEMPTS
+    log.i(
+      "worker: done id=${request.runId} ok=${report.succeeded} problem=${failure?.problem} " +
+        "result=${if (retry) "retry" else "done"}"
+    )
+    return when {
+      failure == null -> Result.success()
+      retry -> Result.retry()
+      else -> Result.success(workDataOf(OUT_PROBLEM to failure.problem.name))
     }
   }
 
@@ -106,27 +118,34 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
           after.shouldNotifyFailure(System.currentTimeMillis()) &&
             (!after.failureNotified || previous != failure.problem)
         ) {
-          notifier.showFailure(failure)
-          status.setFailureNotified(true)
-          log.i("worker: failure notification shown (${failure.problem})")
+          // Recorded only if it was posted: without the notification permission the next
+          // failed run tries again (review 2026-11, F17).
+          if (notifier.showFailure(failure)) {
+            status.setFailureNotified(true)
+            log.i("worker: failure notification shown (${failure.problem})")
+          } else if (after.failureNotified) {
+            // The flag still stands for an earlier problem; this one was not shown.
+            status.setFailureNotified(false)
+          }
         }
+      }
+
+      val pausedNow = report.calendars.filter { it.state == CalendarState.PAUSED }
+      if (pausedNow.isNotEmpty() && report.calendars.all { it.state == CalendarState.PAUSED }) {
+        graph.syncScheduler.cancelPeriodic()
+        log.i("worker: every calendar is paused; periodic work cancelled")
       }
 
       // Once per loss of access, even across runs that fail early (issue #1).
       val sources = graph.settingsRepository.current().sources
       val notices =
         AccessLostNotices.decide(report, before.accessLostNotified, before.lastReport, sources.mapTo(HashSet()) { it.id })
-      if (notices.notify.isNotEmpty()) {
-        val names = sources.associate { it.id to it.name }
-        notices.notify.forEach { notifier.showAccessLost(it, names[it]) }
-        log.i("worker: access-lost notification for ${notices.notify.size} calendar(s)")
-      }
-      if (notices.notified != before.accessLostNotified) status.setAccessLostNotified(notices.notified)
-      val pausedNow = report.calendars.filter { it.state == CalendarState.PAUSED }
-      if (pausedNow.isNotEmpty() && report.calendars.all { it.state == CalendarState.PAUSED }) {
-        graph.syncScheduler.cancelPeriodic()
-        log.i("worker: every calendar is paused; periodic work cancelled")
-      }
+      val names = sources.associate { it.id to it.name }
+      // A calendar counts as notified only if its notification was posted (F17).
+      val shown = notices.notify.filter { notifier.showAccessLost(it, names[it]) }
+      if (shown.isNotEmpty()) log.i("worker: access-lost notification for ${shown.size} calendar(s)")
+      val notified = notices.notified - (notices.notify - shown.toSet()).toSet()
+      if (notified != before.accessLostNotified) status.setAccessLostNotified(notified)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
@@ -143,5 +162,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     /** Output: the [SyncProblem] name of a run that finished with a failure. */
     const val OUT_PROBLEM = "problem"
+
+    /** Process-wide: see [doWork]. */
+    private val SEQUENCE = Mutex()
   }
 }

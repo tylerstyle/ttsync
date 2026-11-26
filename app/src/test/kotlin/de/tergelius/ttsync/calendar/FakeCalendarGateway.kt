@@ -24,6 +24,8 @@ class FakeCalendarGateway : CalendarGateway {
     val calendarId: Long,
     val deleted: Boolean,
     val values: Map<String, Any?>,
+    /** `original_id` is set: Google's row for one edited date of the recurring row [originalId] (R6). */
+    val originalId: Long? = null,
   ) {
     val description: String?
       get() = values[EventSpec.COL_DESCRIPTION] as String?
@@ -138,14 +140,16 @@ class FakeCalendarGateway : CalendarGateway {
 
   override suspend fun countForeignEvents(calendarId: Long): Int {
     requirePermission()
-    return rows.values.count { it.calendarId == calendarId && !it.deleted && it.markerUuid == null }
+    return rows.values.count {
+      it.calendarId == calendarId && !it.deleted && (it.markerUuid == null || it.originalId != null)
+    }
   }
 
   override suspend fun findMarkedRows(target: TargetCalendar): List<MarkedRow> {
     requirePermission()
     // R5: only the target calendar; the LIKE '%[ttsync:%' prefilter, then the strict parse.
     return rows.values
-      .filter { it.calendarId == target.calendarId && !it.deleted }
+      .filter { it.calendarId == target.calendarId && !it.deleted && it.originalId == null }
       .filter { it.description?.contains(Marker.PREFIX) == true }
       .mapNotNull { row -> row.markerUuid?.let { MarkedRow(row.id, it) } }
   }
@@ -238,11 +242,12 @@ class FakeCalendarGateway : CalendarGateway {
     // SQLite's LIKE ignores ASCII case; emulate it.
     return row.calendarId == target.calendarId &&
       !row.deleted &&
+      row.originalId == null &&
       row.description?.endsWith(Marker.line(uuid), ignoreCase = true) == true
   }
 
   private fun observe(id: Long): ObservedRow? =
-    rows[id]?.let { ObservedRow(it.id, it.calendarId, it.deleted, it.description) }
+    rows[id]?.let { ObservedRow(it.id, it.calendarId, it.deleted, it.description, it.originalId != null) }
 
   private fun assertManaged(columns: Set<String>) {
     check(columns == EventSpec.MANAGED_COLUMNS.toSet()) { "R4: wrote columns $columns" }

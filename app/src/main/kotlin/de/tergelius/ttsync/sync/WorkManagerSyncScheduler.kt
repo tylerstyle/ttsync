@@ -106,18 +106,8 @@ class WorkManagerSyncScheduler(
         workManager.getWorkInfosForUniqueWorkFlow(SyncScheduler.PERIODIC_WORK),
         workManager.getWorkInfosForUniqueWorkFlow(SyncScheduler.NOW_WORK),
       ) { periodic, now ->
-        val scheduled = periodic.firstOrNull { !it.state.isFinished }
-        ScheduleState(
-          periodicScheduled = scheduled != null,
-          nextRunAtMillis =
-            scheduled
-              ?.takeIf { it.state == WorkInfo.State.ENQUEUED }
-              ?.nextScheduleTimeMillis
-              ?.takeIf { it in 1 until Long.MAX_VALUE },
-          running = (periodic + now).any { it.state == WorkInfo.State.RUNNING },
-          runNowPending =
-            now.any { it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED },
-        )
+        fun WorkInfo.seen() = WorkSeen(state, runAttemptCount, nextScheduleTimeMillis)
+        scheduleState(periodic.map { it.seen() }, now.map { it.seen() })
       }
       .distinctUntilChanged()
   }
@@ -143,11 +133,7 @@ class WorkManagerSyncScheduler(
     }
     if (policy == ExistingPeriodicWorkPolicy.KEEP) {
       // App start: not while the last run found every selected calendar paused (no calendar left).
-      val paused =
-        status.current().lastReport?.calendars.orEmpty()
-          .filter { it.state == CalendarState.PAUSED }
-          .map { it.ttCalId }
-          .toSet()
+      val paused = status.current().paused
       if (current.sources.all { it.id in paused }) {
         log.i("scheduler: periodic work not scheduled, every calendar is paused")
         return
@@ -291,7 +277,36 @@ class WorkManagerSyncScheduler(
     data class UpgradeToFull(val ids: List<UUID>) : NowPlan
   }
 
+  /** What [scheduleState] reads of one `WorkInfo`. */
+  data class WorkSeen(val state: WorkInfo.State, val attempts: Int, val nextAtMillis: Long)
+
   companion object {
+    /**
+     * [state] from the two unique works, pure for tests.
+     *
+     * A "now" request that failed waits out its back-off (15 min and more) as ENQUEUED work with
+     * an attempt count. That is a later run, not one about to start: it does not count as
+     * pending, so "Sync now" stays usable (and replaces it), and its time is the next run if it
+     * comes before the periodic one (device run 10).
+     */
+    fun scheduleState(periodic: List<WorkSeen>, now: List<WorkSeen>): ScheduleState {
+      val scheduled = periodic.firstOrNull { !it.state.isFinished }
+      val (retrying, fresh) =
+        now.filter { it.state == WorkInfo.State.ENQUEUED }.partition { it.attempts > 0 }
+      return ScheduleState(
+        periodicScheduled = scheduled != null,
+        nextRunAtMillis =
+          (listOfNotNull(scheduled?.takeIf { it.state == WorkInfo.State.ENQUEUED }) + retrying)
+            .map { it.nextAtMillis }
+            .filter { it in 1 until Long.MAX_VALUE }
+            .minOrNull(),
+        running = (periodic + now).any { it.state == WorkInfo.State.RUNNING },
+        // A BLOCKED follow-up always waits behind a running or a fresh request, or behind a retry
+        // (then it is as far away as the retry).
+        runNowPending = fresh.isNotEmpty(),
+      )
+    }
+
     /**
      * The scheduling decision of [runNow], pure for tests. [recentSuccessAgo] is
      * [SyncScheduler.recentSuccessAgo] of the last report.

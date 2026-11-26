@@ -3,6 +3,8 @@ package de.tergelius.ttsync.settings
 import de.tergelius.ttsync.TtLog
 import java.io.File
 import java.nio.file.Files
+import java.security.ProviderException
+import java.security.UnrecoverableKeyException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import kotlinx.coroutines.test.runTest
@@ -11,6 +13,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -70,6 +73,56 @@ class KeystoreCredentialStoreTest {
   }
 
   @Test
+  fun aPassingKeystoreErrorKeepsTheFileAndIsNotRemembered() = runTest {
+    // Review 2026-11, F4: a busy Keystore used to wipe the sign-in for good.
+    store().save(credentials)
+    val store = store()
+    keys.failExisting = ProviderException("keystore busy")
+    assertNull(store.load())
+    assertTrue(file.exists())
+    assertTrue(keys.key != null)
+    assertEquals(0, keys.deletes)
+    keys.failExisting = null
+    assertEquals(credentials, store.load()) // the same instance reads again
+  }
+
+  /** Stands in for android.security.KeyStoreException (API 33), which the store asks by reflection. */
+  class KeystoreFailure(private val transient: Boolean) : Exception("keystore") {
+    @Suppress("unused") fun isTransientFailure(): Boolean = transient
+  }
+
+  @Test
+  fun anUnrecoverableKeyOnlyCountsAsLostWhenItsCauseIsPermanent() = runTest {
+    // Android 12+ wraps a locked or busy Keystore in UnrecoverableKeyException too.
+    store().save(credentials)
+    for (cause in listOf(null, KeystoreFailure(transient = true), IllegalStateException("old Android"))) {
+      keys.failExisting = UnrecoverableKeyException("failed to obtain key").apply { cause?.let(::initCause) }
+      assertNull(store().load())
+      assertTrue("kept with cause $cause", file.exists())
+    }
+    keys.failExisting = UnrecoverableKeyException("failed").apply { initCause(KeystoreFailure(transient = false)) }
+    assertNull(store().load())
+    assertFalse(file.exists())
+  }
+
+  @Test
+  fun aFailedKeyReplacementKeepsTheOldKeyAndFile() = runTest {
+    store().save(credentials)
+    val store = store()
+    assertEquals(credentials, store.load())
+    keys.failExisting = ProviderException("keystore busy")
+    keys.failCreate = ProviderException("still busy")
+    try {
+      store.updateSessionId("session-2")
+      fail("expected the Keystore error")
+    } catch (_: ProviderException) {}
+    assertEquals(0, keys.deletes)
+    keys.failExisting = null
+    keys.failCreate = null
+    assertEquals(credentials, store().load()) // the old file still decrypts
+  }
+
+  @Test
   fun theFolderIsOnlyLookedUpWhenNeeded() = runTest {
     val store = store()
     assertEquals(0, directoryReads) // not in the constructor (phase 5 review, NIT-2)
@@ -82,11 +135,18 @@ class KeystoreCredentialStoreTest {
   private class SoftwareKeys : CredentialKeys {
     var key: SecretKey? = null
     var deletes = 0
+    var failExisting: Exception? = null
+    var failCreate: Exception? = null
 
-    override fun existing(): SecretKey? = key
+    override fun existing(): SecretKey? {
+      failExisting?.let { throw it }
+      return key
+    }
 
-    override fun create(): SecretKey =
-      KeyGenerator.getInstance("AES").apply { init(256) }.generateKey().also { key = it }
+    override fun create(): SecretKey {
+      failCreate?.let { throw it }
+      return KeyGenerator.getInstance("AES").apply { init(256) }.generateKey().also { key = it }
+    }
 
     override fun delete() {
       deletes++

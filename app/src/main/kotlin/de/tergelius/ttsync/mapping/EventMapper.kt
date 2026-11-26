@@ -15,8 +15,9 @@ import java.util.TreeMap
  * Contract:
  * - **Pure.** No IO, no clock, no `android.*`; the same input always gives the same output.
  * - **Every input uuid** ends up in exactly one place: [MappingResult.desired] as [Desired.Write]
- *   or [Desired.Absent], or not in the map at all when it is outside the window (or, defensively,
- *   when the uuid cannot be put in a [Marker]; real uuids are 32 hex characters).
+ *   or [Desired.Absent], or not in the map at all when it is outside the window, when the filter
+ *   cannot judge it ([EventFilter.canJudge]), or, defensively, when the uuid cannot be put in a
+ *   [Marker] (real uuids are 32 hex characters).
  * - **Absent** for birthdays (`type 1`), memos (`category 2`) and deactivated events (including
  *   override tombstones) that are inside the window.
  * - **Filter.** A live, in-window event that [MappingInput.filter] does not match is also
@@ -28,7 +29,10 @@ import java.util.TreeMap
  *   an override whose parent is missing.
  * - **Window.** An event whose `endAt` is before [windowStartMillis] is left out of the map, so its
  *   copy is never touched. Open-ended series and `COUNT` series (end unknown) have
- *   `endAt = Long.MAX_VALUE` and are always in the window.
+ *   `endAt = Long.MAX_VALUE` and are always in the window. The exception is an event listed in
+ *   [MappingInput.copiesInWindow]: its copy still reaches into the window, so the event was moved
+ *   or shortened into the past, and it is mapped like an in-window event, once, to bring the copy
+ *   in line.
  * - **Overrides** (events with `recurring_uuid`/`parent_id`) are written as standalone single
  *   events, without RRULE. The parent keeps exactly its own EXDATEs, which TimeTree sets for every
  *   moved and deleted occurrence ([OverrideResolver] has the details and the unmatched count);
@@ -74,6 +78,12 @@ data class MappingInput(
   val zone: ZoneId,
   /** The calendar's filter; null (or an empty filter) copies every event. */
   val filter: EventFilter? = null,
+  /**
+   * Uuids whose copy reaches into the window (`mapping.end_at` at or after
+   * [EventMapper.windowStartMillis]). They are mapped even if the event now ends before the window;
+   * otherwise a series that got an end date in the past would keep recurring in the copy.
+   */
+  val copiesInWindow: Set<String> = emptySet(),
 )
 
 /** What a copy should look like. */
@@ -111,8 +121,9 @@ data class MappingStats(
   /** Events left out because they ended before the window. */
   val outOfWindow: Int = 0,
   /**
-   * Recurrence lines of written series that were dropped: lines other than RRULE, EXDATE and
-   * RDATE, RRULE lines after the first, and lines that could not be parsed.
+   * Recurrence lines of written events that were dropped: lines other than RRULE, EXDATE and
+   * RDATE, RRULE lines after the first, lines that could not be parsed, and every line of an
+   * edited occurrence (it is written as a single event).
    */
   val droppedRecurrenceLines: Int = 0,
   /**
@@ -120,6 +131,11 @@ data class MappingStats(
    * rule 3; see [OverrideResolver]).
    */
   val unmatchedOverrides: Int = 0,
+  /**
+   * Live, in-window events the filter could not judge ([EventFilter.canJudge]); they are not in
+   * [MappingResult.desired], so their copies are left alone.
+   */
+  val unjudged: Int = 0,
 )
 
 /**
@@ -160,6 +176,7 @@ class DefaultEventMapper : EventMapper {
     var outOfWindow = 0
     var dropped = 0
     var unmatched = 0
+    var unjudged = 0
     for (event in events.values) {
       if (!Marker.isValidUuid(event.uuid)) continue
       val shape = shapeOf(event)
@@ -168,12 +185,14 @@ class DefaultEventMapper : EventMapper {
         // it. Whether a copy gets deleted is decided by the engine from the mapping's own
         // end_at. Tombstones with known old times stay out of the window as before.
         event.isDeactivated && event.endAt == 0L -> desired[event.uuid] = Desired.Absent
-        shape.endAt < windowStart -> outOfWindow++
+        shape.endAt < windowStart && event.uuid !in input.copiesInWindow -> outOfWindow++
         event.isDeactivated -> desired[event.uuid] = Desired.Absent
         event.isBirthday || event.isMemo -> {
           skipped++
           desired[event.uuid] = Desired.Absent
         }
+        // No entry, like an event outside the window: whether it has a copy or not stays as it is.
+        filter != null && !filter.canJudge(event) -> unjudged++
         // Last, so everything above behaves as without a filter. Its recurrence lines and
         // overrides are not counted: there is no copy they could affect.
         filter != null && !filter.matches(event) -> {
@@ -182,6 +201,9 @@ class DefaultEventMapper : EventMapper {
         }
         else -> {
           val recurrence = shape.recurrence
+          // An edited occurrence is written as a single event. Recurrence lines of its own are not
+          // expected; if TimeTree ever sends some, the count shows it (review 2026-11, F13).
+          if (event.parentRefs.isNotEmpty()) dropped += event.recurrences.count { it.isNotBlank() }
           if (recurrence != null) {
             dropped += recurrence.droppedLines
             if (shape.isSeries) {
@@ -206,6 +228,7 @@ class DefaultEventMapper : EventMapper {
           droppedRecurrenceLines = dropped,
           unmatchedOverrides = unmatched,
           filtered = filtered.size,
+          unjudged = unjudged,
         ),
       filtered = filtered,
     )

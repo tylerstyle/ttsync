@@ -28,6 +28,9 @@ import de.tergelius.ttsync.mapping.Marker
  *   ExtendedProperties, Colors or Calendars. Write exactly [EventSpec.MANAGED_COLUMNS] (nulls
  *   included, "explicit clearing") plus `calendar_id` on insert, nothing else.
  * - **R5.** Every query for the app's rows is limited to `calendar_id = target`.
+ * - **R6.** A row with `original_id` or `original_sync_id` (the user edited one date of a copied
+ *   series; Google copies the marker into that row) is never ours: [findMarkedRows] leaves it out,
+ *   the R1 check answers [RowCheck.EXCEPTION], and the R2 precondition excludes it.
  *
  * Without calendar permission every method except [hasPermission] throws `SecurityException`.
  * Suspending methods do their IO on `Dispatchers.IO`.
@@ -56,7 +59,8 @@ interface CalendarGateway {
 
   /**
    * Adoption scan (step 6, R5): rows with `calendar_id = target AND deleted = 0 AND description
-   * LIKE '%[ttsync:%'` whose last line parses with [Marker.parse], ordered by `_ID`. Read-only.
+   * LIKE '%[ttsync:%'` whose last line parses with [Marker.parse], ordered by `_ID`, without
+   * exceptions of recurring events (R6). Read-only.
    */
   suspend fun findMarkedRows(target: TargetCalendar): List<MarkedRow>
 
@@ -88,8 +92,8 @@ interface CalendarGateway {
 
   /**
    * Asks Android to upload the changes now: `ContentResolver.requestSync(account,
-   * "com.android.calendar", {SYNC_EXTRAS_EXPEDITED, SYNC_EXTRAS_MANUAL})`. Never changes sync
-   * settings. Best effort only: it does nothing for an account the app cannot see (Android 13+),
+   * "com.android.calendar", {SYNC_EXTRAS_EXPEDITED})`. Never changes sync settings and never
+   * overrides them (no `SYNC_EXTRAS_MANUAL`). Best effort only: it does nothing for an account the app cannot see (Android 13+),
    * and the provider starts Google's sync for changed rows on its own anyway.
    */
   fun requestUpload(target: TargetCalendar)
@@ -158,6 +162,9 @@ enum class RowCheck {
 
   /** The row has `deleted = 1` (deleted by the user, waiting for the sync adapter). */
   DELETED,
+
+  /** The row is an edited date of a recurring event (R6); it carries the marker only as a copy. */
+  EXCEPTION,
 
   /** The last description line is not the marker of the expected uuid. */
   MARKER_MISMATCH,

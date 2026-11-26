@@ -1,6 +1,7 @@
 package de.tergelius.ttsync
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.lifecycle.ViewModelProvider
 import de.tergelius.ttsync.calendar.CalendarGateway
 import de.tergelius.ttsync.calendar.ProviderCalendarGateway
@@ -27,6 +28,7 @@ import de.tergelius.ttsync.timetree.RawResponseSink
 import de.tergelius.ttsync.timetree.RequestPacer
 import de.tergelius.ttsync.timetree.TimeTreeApi
 import de.tergelius.ttsync.timetree.TimeTreeClient
+import de.tergelius.ttsync.timetree.TtError
 import de.tergelius.ttsync.timetree.TtSessionStore
 import de.tergelius.ttsync.ui.appViewModelFactory
 import kotlin.time.Duration.Companion.milliseconds
@@ -58,7 +60,9 @@ class AppGraph(context: Context) {
   // timetree
   val okHttpClient: OkHttpClient by lazy { TimeTreeApi.newOkHttpClient() }
   val rawResponseSink: RawResponseSink by lazy { BuildVariant.rawResponseSink(appContext) }
-  val requestPacer: RequestPacer by lazy { DefaultRequestPacer() }
+  // elapsedRealtime, not the default nanoTime: it goes on in deep sleep, so a back-off ends when the
+  // server said, not hours later.
+  val requestPacer: RequestPacer by lazy { DefaultRequestPacer(nowMillis = SystemClock::elapsedRealtime) }
   val sessionStore: TtSessionStore by lazy {
     StoredSessionStore(credentialStore, settingsRepository, statusRepository)
   }
@@ -112,8 +116,10 @@ class AppGraph(context: Context) {
    */
   suspend fun restoreRateLimit() {
     val until = statusRepository.current().rateLimitedUntil ?: return
-    val remaining = until - System.currentTimeMillis()
-    if (remaining > 0) {
+    val now = System.currentTimeMillis()
+    val remaining = until - now
+    // Not beyond the longest back-off: see the same check in the engine's preconditions.
+    if (until > now && remaining <= TtError.RateLimited.MAX_BACKOFF.inWholeMilliseconds) {
       requestPacer.backOff(remaining.milliseconds)
       log.i("rate limit still active for ${remaining / 60_000} min")
     }

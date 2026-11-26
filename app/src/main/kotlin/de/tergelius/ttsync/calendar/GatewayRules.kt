@@ -13,6 +13,16 @@ object GatewayRules {
   const val COL_ID = "_id"
   const val COL_CALENDAR_ID = "calendar_id"
   const val COL_DELETED = "deleted"
+  const val COL_ORIGINAL_ID = "original_id"
+  const val COL_ORIGINAL_SYNC_ID = "original_sync_id"
+
+  /**
+   * R6: the row is not an exception of a recurring event. When the user edits one date of a copied
+   * series ("only this event"), Google makes a new row for that date and copies the description
+   * into it, marker included. That row is the user's own change: the app never adopts, updates or
+   * deletes it (device test 2026-11-26, F1: deleting it cancelled that date of the series).
+   */
+  const val NOT_AN_EXCEPTION: String = "$COL_ORIGINAL_ID IS NULL AND $COL_ORIGINAL_SYNC_ID IS NULL"
 
   /**
    * The R2 precondition, run as a `newAssertQuery(Events.CONTENT_URI)` with `withExpectedCount(1)`
@@ -20,7 +30,7 @@ object GatewayRules {
    */
   const val PRECONDITION: String =
     "$COL_ID = ? AND $COL_CALENDAR_ID = ? AND $COL_DELETED = 0 AND " +
-      "${EventSpec.COL_DESCRIPTION} LIKE ? ESCAPE '\\'"
+      "${EventSpec.COL_DESCRIPTION} LIKE ? ESCAPE '\\' AND $NOT_AN_EXCEPTION"
 
   /** Columns no app write may ever contain: sync-adapter-only, or not ours to set (R4). */
   val FORBIDDEN_COLUMNS: Set<String> =
@@ -39,8 +49,8 @@ object GatewayRules {
       "sync_data9",
       "sync_data10",
       COL_DELETED,
-      "original_id",
-      "original_sync_id",
+      COL_ORIGINAL_ID,
+      COL_ORIGINAL_SYNC_ID,
       "customAppPackage",
       "customAppUri",
       "uid2445",
@@ -59,6 +69,7 @@ object GatewayRules {
       row == null -> RowCheck.MISSING
       row.calendarId != targetCalendarId -> RowCheck.OTHER_CALENDAR
       row.deleted -> RowCheck.DELETED
+      row.exception -> RowCheck.EXCEPTION
       Marker.parse(row.description) != expectedUuid -> RowCheck.MARKER_MISMATCH
       else -> RowCheck.OURS
     }
@@ -111,7 +122,9 @@ data class ObservedRow(
   val calendarId: Long,
   val deleted: Boolean,
   val description: String?,
+  /** `original_id` or `original_sync_id` is set: an edited date of a recurring event (R6). */
+  val exception: Boolean = false,
 ) {
   /** Redacted: the description is event content. */
-  override fun toString(): String = "ObservedRow(eventId=$eventId, calendarId=$calendarId, deleted=$deleted)"
+  override fun toString(): String = "ObservedRow(eventId=$eventId, calendarId=$calendarId, deleted=$deleted, exception=$exception)"
 }

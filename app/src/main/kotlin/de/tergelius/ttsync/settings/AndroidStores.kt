@@ -125,6 +125,8 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
 
   override suspend fun recordRun(report: SyncReport) {
     store.edit { prefs ->
+      // Before the report is replaced: without a stored set, the old report says who is paused.
+      prefs[PAUSED_CALENDARS] = encodeIds(SyncStatus.pausedAfter(decode(prefs).paused, report))
       prefs[LAST_REPORT] = StoreCodec.encodeReport(report)
       if (report.succeeded) {
         prefs[LAST_SUCCESS_AT] = report.finishedAt
@@ -161,7 +163,15 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
   }
 
   override suspend fun setAccessLostNotified(ttCalIds: Set<Long>) {
-    store.edit { it[ACCESS_LOST_NOTIFIED] = ttCalIds.mapTo(HashSet()) { id -> id.toString() } }
+    store.edit { it[ACCESS_LOST_NOTIFIED] = encodeIds(ttCalIds) }
+  }
+
+  override suspend fun forgetCalendars(ttCalIds: Set<Long>) {
+    store.edit { prefs ->
+      decodeIds(prefs[ACCESS_LOST_NOTIFIED])?.let { prefs[ACCESS_LOST_NOTIFIED] = encodeIds(it - ttCalIds) }
+      // Always stored from here on: the last report may still list one of them as paused.
+      prefs[PAUSED_CALENDARS] = encodeIds(decode(prefs).paused - ttCalIds)
+    }
   }
 
   override suspend fun clear() {
@@ -177,8 +187,13 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
       autoLoginBlockedUntil = prefs[AUTO_LOGIN_BLOCKED_UNTIL],
       rateLimitedUntil = prefs[RATE_LIMITED_UNTIL],
       failureNotified = prefs[FAILURE_NOTIFIED] ?: false,
-      accessLostNotified = prefs[ACCESS_LOST_NOTIFIED]?.mapNotNullTo(HashSet()) { it.toLongOrNull() },
+      accessLostNotified = decodeIds(prefs[ACCESS_LOST_NOTIFIED]),
+      pausedCalendars = decodeIds(prefs[PAUSED_CALENDARS]),
     )
+
+  private fun encodeIds(ids: Set<Long>): Set<String> = ids.mapTo(HashSet()) { it.toString() }
+
+  private fun decodeIds(stored: Set<String>?): Set<Long>? = stored?.mapNotNullTo(HashSet()) { it.toLongOrNull() }
 
   private companion object {
     val LAST_REPORT = stringPreferencesKey("last_report")
@@ -189,5 +204,6 @@ class DataStoreStatusRepository(context: Context) : StatusRepository {
     val RATE_LIMITED_UNTIL = longPreferencesKey("rate_limited_until")
     val FAILURE_NOTIFIED = booleanPreferencesKey("failure_notified")
     val ACCESS_LOST_NOTIFIED = stringSetPreferencesKey("access_lost_notified")
+    val PAUSED_CALENDARS = stringSetPreferencesKey("paused_calendars")
   }
 }

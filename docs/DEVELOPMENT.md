@@ -33,7 +33,7 @@ Every change must keep these. Most of them have tests that fail if they break.
    reading it back and checking that it is in the target calendar, not deleted, and that its last
    description line is exactly the expected marker. Each write in the `applyBatch` carries that check
    as a `withExpectedCount(1)` precondition. Inserts go only into the target calendar. No update or
-   delete ever uses a selection over the whole table. (DESIGN.md section 5, rules R1–R5;
+   delete ever uses a selection over the whole table. (DESIGN.md section 5, rules R1–R6;
    `calendar/GatewayRules.kt`; `sync/SyncEngineSafetyTest.kt`.)
 2. **One way.** TimeTree → calendar only. The app never writes to TimeTree. An edit to a copy is
    overwritten when the TimeTree event changes; a deleted copy is restored.

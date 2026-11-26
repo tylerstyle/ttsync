@@ -88,6 +88,8 @@ fun SourcesScreen(
         ),
     )
   } else {
+    // No way back while a save removes copies (review 2026-11, M1).
+    BackHandler(enabled = state.saving) {}
     SourcesContent(
       state = state,
       setup = setup,
@@ -156,7 +158,7 @@ fun SourcesContent(
 ) {
   TtScaffold(
     title = stringResource(R.string.sources_title),
-    onBack = onBack,
+    onBack = onBack.takeUnless { state.saving },
     actions = { signOutAction() },
     bottomBar = {
       BottomActionBar {

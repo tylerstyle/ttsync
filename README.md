@@ -30,8 +30,9 @@ info page. [Deutsche Kurzfassung unten.](#deutsch)
 ## What it doesn't do
 
 - **It never writes to TimeTree.** If you edit a copy in Google Calendar, your edit lasts only until
-  the event changes in TimeTree. If you delete a copy, it comes back. To stop copying a calendar,
-  untick it in the app.
+  the event changes in TimeTree (except when you edit just one date of a copied repeating event:
+  the app leaves that edited date alone). If you delete a copy, it comes back. To stop copying a
+  calendar, untick it in the app.
 - It doesn't copy birthdays, memos, comments, attachments, attendees, colours or reminders. Copies
   get the Google calendar's default notifications.
 - It can't sign in with Google or Apple. There is a
@@ -63,7 +64,7 @@ Or ask the calendar's owner to invite a second TimeTree account that uses email 
 
 TT Calendar Sync isn't on Google Play. Install it from the
 [releases page](https://github.com/tylerstyle/ttsync/releases), or with Obtainium, which also keeps
-it updated.
+it updated. See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 **From the releases page**
 
@@ -179,14 +180,14 @@ Going back to an older version (0.1.x) drops the filters: it copies every event 
 You don't need to open the app; it syncs in the background. The **Status** screen (the app's home
 screen) shows:
 
-- whether syncing works ("Syncing normally", "Needs your attention", …), with a button to fix a
-  problem;
+- whether syncing works ("Syncing normally", "Last sync failed, trying again", "Needs your
+  attention", …), with a button to fix a problem;
 - the last successful sync (in red when it's more than 24 hours ago) and the next one;
 - what the last sync did: added, updated, deleted, skipped, and how many events your filters left
   out;
 - warnings, for example when Google sync is off or battery use is restricted;
-- **Sync now**, to sync right away. If the last sync was less than a minute ago, the app just tells
-  you so.
+- **Sync now**, to sync right away — including right after a failed sync. If the last successful
+  sync was less than a minute ago, the app just tells you so.
 
 **How often it syncs.** Every hour by default. You can choose every 3 or 6 hours in Settings → Sync
 interval, but never more often than hourly, to keep the load on TimeTree low. Android may run a
@@ -194,13 +195,16 @@ sync up to 15 minutes early or late, and it waits while the phone is offline.
 
 New, changed and deleted events arrive with the next sync, or right away with "Sync now". Every
 6 hours the app also reads the whole TimeTree calendar, to catch anything that slipped through.
-(Before 0.2.1, a deletion in a large calendar could take up to 6 hours.)
+(Before 0.2.1, a deletion in a large calendar could take up to 6 hours.) As a safety guard, if a
+full read suddenly shows at least 10 events and more than half of a calendar's copies as deleted,
+the app waits for a second full read at least 10 minutes later before removing them. Deleting a few
+events isn't delayed.
 
 **Notifications.** The app only notifies you when something needs your attention:
 
 - syncing failed 3 times in a row, or hasn't succeeded for more than 24 hours;
-- the app lost access to a TimeTree calendar (for example, you were removed from it). Its copies are
-  kept, and the notification offers to remove them.
+- the app lost access to a TimeTree calendar (for example, you were removed from it) — once per
+  calendar. Its copies are kept, and the notification offers to remove them.
 
 The next successful sync clears the notification. While a sync is running, Android may also show a
 short "Syncing with TimeTree" notification.
@@ -243,8 +247,8 @@ Now and then, glance at Status: "Last successful sync" turns red when it is more
   and to read your calendar list, labels and events. Uploading the copies to Google is done by
   Android's own Google Calendar sync, not by the app. The links in the app (dontkillmyapp.com, the
   source code) open in your browser, and only when you tap them.
-- App data is excluded from Android backups. **Sign out** deletes the stored sign-in, the settings
-  and the sync data from the phone.
+- App data is excluded from Android backups, and the sign-in screen blocks screenshots. **Sign out**
+  deletes the stored sign-in, the settings and the sync data from the phone.
 - The app's logs contain no passwords, cookies or event content.
 - The copied events end up in your Google account and are visible to everyone you share that Google
   calendar with. That's another reason to copy only calendars whose owners agree.
@@ -284,21 +288,31 @@ failed attempts, TimeTree may block sign-ins for a while, so wait before trying 
 changed your TimeTree password, or the session ended. Tap **Sign in again** and sign in.
 
 **"TimeTree asked the app to slow down" or "No connection to TimeTree".** Nothing to do; the app
-tries again by itself.
+tries again by itself (or tap **Sync now** once you're back online).
 
 **"TimeTree answered in a way this app doesn't understand."** TimeTree changed its API. Check for an
 app update (Obtainium or the releases page). If there is none, please
 [open an issue](https://github.com/tylerstyle/ttsync/issues).
 
-**"Target calendar was deleted" or "The target calendar can't be written any more".** Choose a target
-calendar again (the button on Status takes you there).
+**"Target calendar is gone" or "The target calendar can't be written any more".** The calendar was
+deleted on Google Calendar, can no longer be edited, or the phone has set up its calendars anew
+(for example after resetting the phone's calendar storage or removing and re-adding your Google
+account). Choose the target calendar again (the button on Status takes you there) — existing copies
+are found again, not duplicated.
 
 **"Google sync is off" or "changes not uploaded to Google yet".** The copies are on the phone but
 don't reach your Google account. Turn on auto-sync and calendar sync for your Google account
-(Settings → Accounts).
+(Settings → Accounts). Also check for the Android deletion notice below.
+
+**Android notification "Can't sync – Attempted to delete too many Calendar."** (Wording varies by
+Android version and language.) Android's own guard can appear after **Remove all copies** or after
+switching the target away from a calendar that held almost only copies. Android then holds back
+calendar sync for that Google account — new copies aren't uploaded either — until you open that
+notification and confirm the deletion.
 
 **"No access to a TimeTree calendar".** You were removed from that calendar, or it was deleted. The
-app keeps its copies until you remove them (button on Status or in the notification).
+app notifies you once per calendar and keeps its copies until you remove them (button on Status or
+in the notification).
 
 **Syncing stopped, or "Last successful sync" is red.** Go through [Keep it running](#keep-it-running).
 
@@ -307,7 +321,8 @@ days ago or that the calendar's filter leaves out ("Events: …" under Settings 
 calendars). Otherwise tap Sync now, and check that its calendar is ticked there.
 
 **My edit to a copy was undone, or a deleted copy came back.** That's expected: copying goes one way
-only, and TimeTree wins. Change the event in TimeTree instead, or untick the calendar.
+only, and TimeTree wins. Change the event in TimeTree instead, or untick the calendar. If you edit
+just one date of a copied repeating event in Google Calendar, the app leaves that edited date alone.
 
 **How do I get reminders for the copies?** Copies use the default notifications of the Google
 calendar. Set them on calendar.google.com: Settings → your calendar → Event notifications.
@@ -363,8 +378,9 @@ jederzeit ändern oder sperren kann; die Nutzungsbedingungen von TimeTree erlaub
 nicht. Nutzung auf eigenes Risiko. Kopiere nur Kalender, deren Besitzer zugestimmt haben.
 
 - **Was sie nicht tut:** Sie schreibt nie in TimeTree. Änderungen an einer Kopie halten nur, bis
-  sich der Termin in TimeTree ändert; gelöschte Kopien kommen zurück. Keine Geburtstage, Memos,
-  Erinnerungen, Anhänge oder Teilnehmer.
+  sich der Termin in TimeTree ändert (bearbeitest du in Google Kalender nur einen einzelnen Termin
+  einer kopierten Serie, lässt die App diesen Termin in Ruhe); gelöschte Kopien kommen zurück. Keine
+  Geburtstage, Memos, Erinnerungen, Anhänge oder Teilnehmer.
 - **Voraussetzungen:** Android 8.0 oder neuer, ein Google-Konto mit eingeschalteter
   Kalendersynchronisierung, ein TimeTree-Konto mit E-Mail und Passwort.
 - **Anmeldung mit Google oder Apple bei TimeTree?** Lege in der TimeTree-App eine E-Mail-Adresse
@@ -383,6 +399,7 @@ nicht. Nutzung auf eigenes Risiko. Kopiere nur Kalender, deren Besitzer zugestim
   „Über die App und Datenschutz“ (in Obtainium als „Certificate Hash“) muss der Fingerabdruck des
   Signaturzertifikats lauten:
   `C0:FD:19:AE:C1:8E:BB:8F:5B:B2:59:5D:4A:91:B1:19:4C:C8:9D:67:03:4C:32:FF:73:7F:E3:7A:A6:39:C1:13`.
+  Was sich in den einzelnen Versionen geändert hat, steht in [CHANGELOG.md](CHANGELOG.md).
 - **Einrichtung:** Anmelden, TimeTree-Kalender auswählen, Ziel-Google-Kalender wählen (am besten
   einen eigenen, z. B. „TimeTree“, auf calendar.google.com anlegen), Akkunutzung
   „Uneingeschränkt“ erlauben, Benachrichtigungen erlauben. Die erste Synchronisierung startet
@@ -399,20 +416,32 @@ nicht. Nutzung auf eigenes Risiko. Kopiere nur Kalender, deren Besitzer zugestim
   Zurück zu einer älteren Version (0.1.x): Die Filter entfallen, alle Termine werden wieder
   kopiert.
 - **Im Alltag:** Der Status-Bildschirm zeigt die letzte erfolgreiche Synchronisierung (rot nach mehr
-  als 24 Stunden) und hat „Jetzt synchronisieren“. Synchronisiert wird stündlich (wahlweise alle 3
-  oder 6 Stunden). Neue, geänderte und gelöschte Termine kommen mit der nächsten
-  Synchronisierung, mit „Jetzt synchronisieren“ sofort.
+  als 24 Stunden) und hat „Jetzt synchronisieren“ – auch sofort nach einem fehlgeschlagenen Lauf
+  (Überschrift „Letzte Synchronisierung fehlgeschlagen, neuer Versuch folgt“). Synchronisiert wird
+  stündlich (wahlweise alle 3 oder 6 Stunden). Neue, geänderte und gelöschte Termine kommen mit der
+  nächsten Synchronisierung, mit „Jetzt synchronisieren“ sofort. Meldet ein vollständiger Abgleich
+  plötzlich mindestens 10 Termine und mehr als die Hälfte der Kopien eines Kalenders als gelöscht,
+  wartet die App zur Sicherheit einen zweiten vollständigen Abgleich frühestens 10 Minuten später
+  ab; einzelne Löschungen werden nicht verzögert. Bei verlorenem Zugriff auf einen TimeTree-Kalender
+  meldet sich die App einmal pro Kalender.
 - **Zuverlässig laufen lassen:** In der App die **Zuverlässigkeits-Checkliste** durchgehen:
   Akkunutzung „Uneingeschränkt“, „App-Aktivität bei Nichtnutzung pausieren“ aus, Google-Sync an.
   Samsung: die App bei den Hintergrundnutzungslimits als nie schlafend eintragen.
   Xiaomi/Redmi/POCO: **Autostart** an. OnePlus: Hintergrundaktivität erlauben. Mehr unter
   [dontkillmyapp.com](https://dontkillmyapp.com).
 - **Datenschutz:** E-Mail und Passwort bleiben auf dem Handy, verschlüsselt mit einem Schlüssel im
-  Android-Keystore, und gehen nur an TimeTree. Die App verbindet sich nur mit `timetreeapp.com`;
-  das Hochladen zu Google übernimmt die Google-Kalendersynchronisierung von Android. Kein eigener
-  Server, keine Analyse, kein Tracking.
+  Android-Keystore, und gehen nur an TimeTree; auf dem Anmeldebildschirm sind Screenshots
+  gesperrt. Die App verbindet sich nur mit `timetreeapp.com`; das Hochladen zu Google übernimmt die
+  Google-Kalendersynchronisierung von Android. Kein eigener Server, keine Analyse, kein Tracking.
 - **Deine Termine sind sicher:** Die App ändert oder löscht nur Termine, deren Beschreibung mit
   ihrer Markierungszeile `[ttsync:…]` endet. Diese Zeile bitte nicht ändern.
+- **Häufige Hinweise:** „Zielkalender ist weg“ erscheint auch, wenn das Handy seine Kalender neu
+  eingerichtet hat (z. B. nach Zurücksetzen des Kalenderspeichers oder neuem Hinzufügen des
+  Google-Kontos): einfach den Zielkalender erneut wählen, vorhandene Kopien werden wiedererkannt und
+  nicht doppelt angelegt. Nach „Alle Kopien entfernen“ oder dem Wechsel weg von einem Kalender, der
+  fast nur Kopien enthielt, kann Android selbst eine Benachrichtigung anzeigen (sinngemäß „Zu viele
+  Kalendertermine gelöscht“) und die Kalendersynchronisierung des Google-Kontos anhalten – neue
+  Kopien werden dann erst hochgeladen, wenn du in dieser Benachrichtigung das Löschen bestätigst.
 - **Beenden und deinstallieren:** Zuerst in den Einstellungen **„Alle Kopien entfernen“**, dann
   deinstallieren. Beim Deinstallieren kann Android keinen App-Code mehr ausführen, die Kopien
   blieben sonst im Kalender.

@@ -25,6 +25,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * event that means it is skipped as malformed and never copied; for `GET /calendars` it means
  * `TtError.ApiChanged` and no run succeeds. Neither is acceptable for data the copies hardly
  * depend on, so a value that does not decode becomes null, and a list keeps the elements that do.
+ * An event's attendees are the exception: an attendee filter decides with them whether a copy
+ * exists, so they read as null (unknown) unless every id decodes, and such an event is left alone.
  */
 
 /** Decodes [element]; null if it is JSON null or does not decode. */
@@ -84,11 +86,32 @@ internal open class LenientListSerializer<T : Any>(private val element: KSeriali
   override fun serialize(encoder: Encoder, value: List<T>) = strict.serialize(encoder, value)
 }
 
+/**
+ * A list that reads as null ("unknown") unless it is an array whose elements all decode. For a
+ * list that decides something: [LenientListSerializer] would turn a changed shape into an empty
+ * list, and an empty list of attendees makes an attendee filter drop the event's copy (review
+ * 2026-11, F8). Use it only on nullable list properties with a default (`= null`).
+ */
+internal open class StrictOrNullListSerializer<T : Any>(private val element: KSerializer<T>) :
+  KSerializer<List<T>?> {
+  private val strict = ListSerializer(element).nullable
+
+  override val descriptor: SerialDescriptor = strict.descriptor
+
+  override fun deserialize(decoder: Decoder): List<T>? {
+    val json = decoder as? JsonDecoder ?: return strict.deserialize(decoder)
+    val array = json.decodeJsonElement() as? JsonArray ?: return null
+    return array.map { json.decodeOrNull(element, it) ?: return null }
+  }
+
+  override fun serialize(encoder: Encoder, value: List<T>?) = strict.serialize(encoder, value)
+}
+
 internal object LenientLong : LenientSerializer<Long>(Long.serializer())
 
 internal object LenientInt : LenientSerializer<Int>(Int.serializer())
 
-internal object LenientLongList : LenientListSerializer<Long>(Long.serializer())
+internal object LongListOrNull : StrictOrNullListSerializer<Long>(Long.serializer())
 
 internal object LenientLabelList : LenientListSerializer<TtLabel>(TtLabel.serializer())
 

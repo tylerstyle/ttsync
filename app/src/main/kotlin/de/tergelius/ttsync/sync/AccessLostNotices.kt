@@ -12,7 +12,8 @@ import de.tergelius.ttsync.store.CalendarState
  * ([de.tergelius.ttsync.settings.SyncStatus.accessLostNotified]):
  * - a calendar the report shows paused and that isn't in that set is notified and added;
  * - a calendar leaves the set only when a report shows it active again (or it is no longer
- *   selected). A report that lists no calendars, or only some (a run that failed halfway), changes
+ *   selected; deselecting drops it at once, `StatusRepository.forgetCalendars`). A report that
+ *   lists no calendars, or only some (a run that failed halfway), changes
  *   nothing for the others.
  */
 object AccessLostNotices {
@@ -37,7 +38,10 @@ object AccessLostNotices {
     val known = notified ?: previousReport?.withState(CalendarState.PAUSED).orEmpty().toSet()
     val notify = report.withState(CalendarState.PAUSED).filter { it !in known }.distinct()
     val active = report.withState(CalendarState.ACTIVE).toSet()
-    return Decision(notify, (known - active + notify).filterTo(LinkedHashSet()) { it in selected })
+    val notified = known - active + notify
+    // No selection at all means the settings could not be read (a run needs a calendar), not that
+    // everything was deselected: then nothing is dropped (review 2026-11, B3).
+    return Decision(notify, if (selected.isEmpty()) notified else notified.filterTo(LinkedHashSet()) { it in selected })
   }
 
   private fun SyncReport.withState(state: CalendarState): List<Long> =

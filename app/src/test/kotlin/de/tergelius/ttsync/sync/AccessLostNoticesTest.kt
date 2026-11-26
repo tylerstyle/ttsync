@@ -63,6 +63,15 @@ class AccessLostNoticesTest {
   }
 
   @Test
+  fun anEmptySelectionForgetsNothing() {
+    // Settings that could not be read come back empty; a run always has a calendar (review
+    // 2026-11, B3).
+    val unread = AccessLostNotices.decide(report(failed = true), setOf(a), null, emptySet())
+    assertEquals(emptyList<Long>(), unread.notify)
+    assertEquals(setOf(a), unread.notified)
+  }
+
+  @Test
   fun withoutAStoredSetThePreviousReportCountsAsBefore() {
     // Updating from 0.2.1: the previous report's paused calendars were notified under the old rule.
     val previous = report(a to paused, b to active)

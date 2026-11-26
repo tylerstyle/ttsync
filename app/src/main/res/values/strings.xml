@@ -256,11 +256,12 @@
 
     <!-- Status -->
     <string name="status_health_ok">Syncing normally</string>
+    <string name="status_health_retrying">Last sync failed, trying again</string>
     <string name="status_health_waiting">Waiting for the first sync</string>
     <string name="status_health_running">Syncing now…</string>
     <string name="status_health_attention">Needs your attention</string>
     <string name="status_health_paused">Paused</string>
-    <string name="status_health_target_deleted">Target calendar was deleted</string>
+    <string name="status_health_target_deleted">Target calendar is gone</string>
     <string name="status_paused_text">The app lost access to all selected TimeTree calendars. Their copies are kept.</string>
     <string name="status_stale_text">No successful sync for more than 24 hours. Check the reliability checklist.</string>
     <plurals name="status_failures_text">
@@ -314,7 +315,7 @@
     <string name="status_target_unknown">the target calendar</string>
     <string name="problem_not_configured">Setup isn\'t finished.</string>
     <string name="problem_no_permission">The app has no access to your calendars, so it can\'t write the copies.</string>
-    <string name="problem_target_deleted">The Google calendar the copies went into no longer exists. Choose a new one.</string>
+    <string name="problem_target_deleted">The Google calendar the copies went into no longer exists, or this phone has set up its calendars anew. Choose the calendar again.</string>
     <string name="problem_target_unavailable">The target calendar can\'t be written any more: it moved to another account, became read-only or stopped syncing. Choose a calendar again.</string>
     <string name="problem_not_signed_in">TimeTree needs you to sign in again.</string>
     <string name="problem_auth_rejected">TimeTree rejected the stored sign-in, so automatic sign-in is paused. Sign in again.</string>

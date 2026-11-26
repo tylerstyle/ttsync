@@ -16,8 +16,33 @@ class TargetCalendarTest {
       syncEvents = true,
       visible = true,
       color = null,
+      serverId = "personal@group.example",
     )
   private val target = TargetCalendar.of(info)
+
+  @Test
+  fun anIdThatHoldsAnotherCalendarNowIsMissing() {
+    // F5: after a reset of the calendar storage `_ID` 15 is another calendar of the same account.
+    val other = info.copy(displayName = "other", serverId = "other@group.example")
+    assertEquals(TargetCheck.MISSING, target.check(other))
+    assertFalse(target.isSameCalendar(TargetCalendar.of(other)))
+    // Renamed in Google: still the same calendar.
+    assertEquals(TargetCheck.OK, target.check(info.copy(displayName = "renamed")))
+  }
+
+  @Test
+  fun aTargetStoredWithoutAServerIdIsCheckedByIdAndAccountAndLearnsIt() {
+    val old = TargetCalendar(15, "user@example.org", CalendarInfo.ACCOUNT_TYPE_GOOGLE)
+    assertEquals(TargetCheck.OK, old.check(info))
+    assertTrue(old.isSameCalendar(target))
+    assertEquals(target, old.withServerIdOf(info))
+    // Nothing to learn from a row without one, and a known id is never replaced.
+    assertEquals(old, old.withServerIdOf(info.copy(serverId = null)))
+    assertEquals(target, target.withServerIdOf(info.copy(serverId = "other@group.example")))
+    // Once the id is known, a row without one is not the target (fails closed).
+    assertEquals(TargetCheck.MISSING, target.check(info.copy(serverId = null)))
+    assertFalse(target.isSameCalendar(old))
+  }
 
   @Test
   fun sameCalendarPasses() {
@@ -39,7 +64,7 @@ class TargetCalendarTest {
 
   @Test
   fun toStringHidesTheAccount() {
-    assertFalse(target.toString().contains("example.org"))
+    assertFalse(target.toString().contains("example"))
     assertFalse(info.toString().contains("example.org"))
   }
 

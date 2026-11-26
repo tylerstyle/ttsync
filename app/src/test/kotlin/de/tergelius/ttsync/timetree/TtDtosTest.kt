@@ -64,20 +64,24 @@ class TtDtosTest {
     val event = event(""", "attendees": [11, 12], "author_id": 11""")
     assertEquals(listOf(11L, 12L), event.attendees)
     assertEquals(11L, event.authorId)
-    // Missing or null: none, and the event still decodes.
-    assertEquals(emptyList<Long>(), event("").attendees)
+    assertEquals(emptyList<Long>(), event(""", "attendees": []""").attendees)
+    // Missing or null: unknown (not "none"), and the event still decodes.
+    assertNull(event("").attendees)
     assertNull(event("").authorId)
-    assertEquals(emptyList<Long>(), event(""", "attendees": null, "author_id": null""").attendees)
+    assertNull(event(""", "attendees": null, "author_id": null""").attendees)
   }
 
   @Test
   fun unexpectedAttendeesOrAuthorNeverCostTheEvent() {
     // A strict field would make the event "malformed", and a skipped event is never copied.
+    // Attendees in an unexpected shape are unknown, never "none": an attendee filter would take
+    // "none" for "does not match" and the copy would be deleted (review 2026-11, F8).
     val odd = event(""", "attendees": [11, "x", {"id": 3}, null, [1], 12], "author_id": "someone"""")
-    assertEquals(listOf(11L, 12L), odd.attendees)
+    assertNull(odd.attendees)
     assertNull(odd.authorId)
-    assertEquals(emptyList<Long>(), event(""", "attendees": {"user_id": 11}""").attendees)
-    assertEquals(emptyList<Long>(), event(""", "attendees": "11"""").attendees)
+    assertNull(event(""", "attendees": [11, null]""").attendees)
+    assertNull(event(""", "attendees": {"user_id": 11}""").attendees)
+    assertNull(event(""", "attendees": "11"""").attendees)
   }
 
   @Test

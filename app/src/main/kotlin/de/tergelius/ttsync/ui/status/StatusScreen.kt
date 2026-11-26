@@ -228,7 +228,9 @@ private fun HealthCard(state: StatusUiState, navigation: StatusNavigation, fixes
   val problemColor = MaterialTheme.colorScheme.errorContainer
   val (tone, container) =
     when (state.health) {
-      SyncHealth.OK -> Tone.OK to MaterialTheme.colorScheme.primaryContainer
+      SyncHealth.OK ->
+        if (state.lastRunFailed) Tone.INFO to MaterialTheme.colorScheme.secondaryContainer
+        else Tone.OK to MaterialTheme.colorScheme.primaryContainer
       SyncHealth.RUNNING -> Tone.INFO to MaterialTheme.colorScheme.secondaryContainer
       SyncHealth.PAUSED -> Tone.UNKNOWN to MaterialTheme.colorScheme.surfaceContainerHigh
       SyncHealth.NEEDS_ATTENTION,
@@ -275,7 +277,11 @@ private fun healthHeadline(state: StatusUiState): String =
   stringResource(
     when (state.health) {
       SyncHealth.OK ->
-        if (state.lastReport == null) R.string.status_health_waiting else R.string.status_health_ok
+        when {
+          state.lastReport == null -> R.string.status_health_waiting
+          state.lastRunFailed -> R.string.status_health_retrying
+          else -> R.string.status_health_ok
+        }
       SyncHealth.RUNNING -> R.string.status_health_running
       SyncHealth.NEEDS_ATTENTION -> R.string.status_health_attention
       SyncHealth.PAUSED -> R.string.status_health_paused

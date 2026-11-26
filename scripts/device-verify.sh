@@ -120,7 +120,8 @@ fi
 echo "Our rows deleted, upload pending (deleted=1): $deleted"
 
 if command -v sha256sum >/dev/null; then sha=(sha256sum); else sha=(shasum -a 256); fi
-fingerprint=$(printf '%s\n' "$parsed" | grep '^U' | "${sha[@]}" | cut -c1-16)
+# "|| true": a calendar without other rows is no error (pipefail, review 2026-11, F19).
+fingerprint=$(printf '%s\n' "$parsed" | { grep '^U' || true; } | "${sha[@]}" | cut -c1-16)
 echo "Other rows: $others (content fingerprint $fingerprint)"
 if [[ $suspicious -gt 0 ]]; then
   echo "  $suspicious of them contain \"[ttsync:\" but not as the last line, so the app leaves them alone."

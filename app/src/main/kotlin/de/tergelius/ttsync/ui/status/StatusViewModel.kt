@@ -96,6 +96,13 @@ data class StatusUiState(
   /** One-off "Synced N s ago" snackbar, until [StatusViewModel.onSyncedShown]. */
   val syncedNote: SyncedNote? = null,
 ) {
+  /**
+   * The last run failed, but not often or badly enough for "Needs your attention": the headline
+   * must not say "Syncing normally" above the error (device run 10).
+   */
+  val lastRunFailed: Boolean
+    get() = health == SyncHealth.OK && problem != null
+
   /** "Sync now" is pointless while a run is going on or about to start. */
   val canSyncNow: Boolean
     get() = setupStep == SetupStep.DONE && !running && !runNowPending
@@ -143,12 +150,19 @@ data class StatusUiState(
           else -> null
         }
       val problem = liveProblem ?: effective.lastReport?.failure?.problem
+      // The stored set, not the last report: a run that fails early (no network, say) lists no
+      // calendars, and the paused ones must not vanish from Status then (review 2026-11, M3).
+      val pausedIds = status.paused
+      val everySourcePaused = settings.sources.isNotEmpty() && settings.sources.all { it.id in pausedIds }
       val health =
         when {
           schedule.running -> SyncHealth.RUNNING
           liveProblem == SyncProblem.TARGET_DELETED -> SyncHealth.TARGET_DELETED
           liveProblem != null -> SyncHealth.NEEDS_ATTENTION
-          else -> effective.health(running = false, nowMillis = now)
+          else ->
+            effective.health(running = false, nowMillis = now).let {
+              if (it == SyncHealth.OK && everySourcePaused) SyncHealth.PAUSED else it
+            }
         }
       // Known to be off only: an account Android hides from the app counts as unknown (B2).
       val googleSyncOff =
@@ -161,8 +175,6 @@ data class StatusUiState(
         if (device?.backgroundRestricted == true) add(StatusWarning.BACKGROUND_RESTRICTED)
         if (device != null && !device.notificationsEnabled) add(StatusWarning.NOTIFICATIONS_OFF)
       }
-      val pausedIds =
-        report?.calendars.orEmpty().filter { it.state == CalendarState.PAUSED }.map { it.ttCalId }
       return StatusUiState(
         loading = false,
         setupStep = setupStep,

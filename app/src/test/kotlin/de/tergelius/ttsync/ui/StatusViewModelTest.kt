@@ -1,5 +1,7 @@
 package de.tergelius.ttsync.ui
 
+import de.tergelius.ttsync.sync.WorkManagerSyncScheduler
+import androidx.work.WorkInfo
 import de.tergelius.ttsync.calendar.GoogleSyncState
 import de.tergelius.ttsync.calendar.TargetCheck
 import de.tergelius.ttsync.settings.Settings
@@ -233,6 +235,64 @@ class StatusViewModelTest {
       listOf(StatusWarning.BATTERY_RESTRICTED, StatusWarning.NOTIFICATIONS_OFF),
       state.warnings,
     )
+  }
+
+  @Test
+  fun oneFailedRunIsNotSyncingNormallyAndSyncNowStaysUsable() {
+    // Device run 10: "Syncing normally" stood above the error, and "Sync now" was disabled for
+    // the 15 minutes the failed request waited for its retry.
+    val failed = SyncStatus(lastReport = report(failure = SyncFailure(SyncProblem.NETWORK)), lastSuccessAt = NOW)
+    val retryAt = NOW + 15 * 60_000L
+    val waiting =
+      WorkManagerSyncScheduler.scheduleState(
+        periodic = listOf(WorkManagerSyncScheduler.WorkSeen(WorkInfo.State.ENQUEUED, 0, NOW + 3_600_000L)),
+        now = listOf(WorkManagerSyncScheduler.WorkSeen(WorkInfo.State.ENQUEUED, 1, retryAt)),
+      )
+    assertFalse(waiting.runNowPending)
+    assertEquals(retryAt, waiting.nextRunAtMillis)
+
+    val state = derive(status = failed, schedule = waiting)
+    assertEquals(SyncHealth.OK, state.health)
+    assertTrue(state.lastRunFailed)
+    assertTrue(state.canSyncNow)
+    assertEquals(retryAt, state.nextRunAt)
+    assertFalse(derive().lastRunFailed)
+
+    // A request that has not run yet is about to start.
+    val fresh =
+      WorkManagerSyncScheduler.scheduleState(
+        periodic = emptyList(),
+        now = listOf(WorkManagerSyncScheduler.WorkSeen(WorkInfo.State.ENQUEUED, 0, NOW)),
+      )
+    assertTrue(fresh.runNowPending)
+    assertFalse(derive(schedule = fresh).canSyncNow)
+  }
+
+  @Test
+  fun pausedCalendarsStayAfterARunThatFailedEarly() {
+    // Review 2026-11, M3: such a run's report lists no calendars at all.
+    val failedEarly = report(failure = SyncFailure(SyncProblem.NETWORK))
+    val one = derive(status = SyncStatus(lastReport = failedEarly, lastSuccessAt = NOW, pausedCalendars = setOf(1)))
+    assertEquals(listOf(SourceCalendar(1, "Family")), one.pausedCalendars)
+    assertEquals(SyncHealth.OK, one.health)
+
+    val all = derive(status = SyncStatus(lastReport = failedEarly, lastSuccessAt = NOW, pausedCalendars = setOf(1, 2)))
+    assertEquals(2, all.pausedCalendars.size)
+    assertEquals(SyncHealth.PAUSED, all.health)
+    // A calendar that is no longer selected is not shown.
+    val other = derive(status = SyncStatus(lastReport = failedEarly, lastSuccessAt = NOW, pausedCalendars = setOf(9)))
+    assertTrue(other.pausedCalendars.isEmpty())
+  }
+
+  @Test
+  fun aForgottenCalendarIsNotPausedAlthoughTheLastReportSaysSo() {
+    // Deselected and selected again: the stored set counts, the old report does not.
+    val old = report(calendars = listOf(CalendarReport(1, mode = null, state = CalendarState.PAUSED)))
+    val forgotten = derive(status = SyncStatus(lastReport = old, lastSuccessAt = NOW, pausedCalendars = emptySet()))
+    assertTrue(forgotten.pausedCalendars.isEmpty())
+    // Without a stored set (a status written by 0.2.1) the report still counts.
+    val legacy = derive(status = SyncStatus(lastReport = old, lastSuccessAt = NOW))
+    assertEquals(listOf(SourceCalendar(1, "Family")), legacy.pausedCalendars)
   }
 
   @Test

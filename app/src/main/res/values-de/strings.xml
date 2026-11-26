@@ -240,11 +240,12 @@
 
     <!-- Status -->
     <string name="status_health_ok">Synchronisierung läuft normal</string>
+    <string name="status_health_retrying">Letzte Synchronisierung fehlgeschlagen, neuer Versuch folgt</string>
     <string name="status_health_waiting">Warte auf die erste Synchronisierung</string>
     <string name="status_health_running">Synchronisiere gerade…</string>
     <string name="status_health_attention">Braucht deine Aufmerksamkeit</string>
     <string name="status_health_paused">Pausiert</string>
-    <string name="status_health_target_deleted">Zielkalender wurde gelöscht</string>
+    <string name="status_health_target_deleted">Zielkalender ist weg</string>
     <string name="status_paused_text">Die App hat den Zugriff auf alle ausgewählten TimeTree-Kalender verloren. Ihre Kopien bleiben erhalten.</string>
     <string name="status_stale_text">Seit über 24 Stunden keine erfolgreiche Synchronisierung. Sieh in die Zuverlässigkeits-Checkliste.</string>
     <plurals name="status_failures_text">
@@ -292,7 +293,7 @@
     <string name="status_target_unknown">dem Zielkalender</string>
     <string name="problem_not_configured">Die Einrichtung ist nicht abgeschlossen.</string>
     <string name="problem_no_permission">Die App hat keinen Zugriff auf deine Kalender und kann die Kopien nicht schreiben.</string>
-    <string name="problem_target_deleted">Der Google-Kalender, in den kopiert wurde, existiert nicht mehr. Wähle einen neuen.</string>
+    <string name="problem_target_deleted">Der Google-Kalender, in den kopiert wurde, existiert nicht mehr, oder dieses Telefon hat seine Kalender neu eingerichtet. Wähle den Kalender erneut.</string>
     <string name="problem_target_unavailable">In den Zielkalender kann nicht mehr geschrieben werden: Er gehört jetzt zu einem anderen Konto, ist schreibgeschützt oder wird nicht mehr synchronisiert. Wähle erneut einen Kalender.</string>
     <string name="problem_not_signed_in">TimeTree verlangt, dass du dich erneut anmeldest.</string>
     <string name="problem_auth_rejected">TimeTree hat die gespeicherte Anmeldung abgelehnt, deshalb ist die automatische Anmeldung pausiert. Melde dich erneut an.</string>

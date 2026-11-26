@@ -237,7 +237,17 @@ class EngineHarness {
     const val B2 = "bbbb0002bbbb0002bbbb0002bbbb0002"
 
     fun google(id: Long, name: String, account: String = ACCOUNT) =
-      CalendarInfo(id, name, account, CalendarInfo.ACCOUNT_TYPE_GOOGLE, 700, syncEvents = true, visible = true, color = null)
+      CalendarInfo(
+        id,
+        name,
+        account,
+        CalendarInfo.ACCOUNT_TYPE_GOOGLE,
+        700,
+        syncEvents = true,
+        visible = true,
+        color = null,
+        serverId = "$name@group.example",
+      )
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -428,7 +438,7 @@ class EngineHarness {
         val parent = e.recurringUuid ?: e.parentId
         if (parent != null && parent in byUuid) parentOf[e.uuid] = parent
         val endAt = if (e.recurrences.isNotEmpty()) Long.MAX_VALUE else maxOf(e.endAt, e.startAt)
-        if (endAt < windowStart) {
+        if (endAt < windowStart && e.uuid !in input.copiesInWindow) {
           outOfWindow++
           continue
         }
@@ -438,6 +448,7 @@ class EngineHarness {
             desired[e.uuid] = Desired.Absent
           }
           e.isDeactivated -> desired[e.uuid] = Desired.Absent
+          filter != null && !filter.canJudge(e) -> Unit
           filter != null && !filter.matches(e) -> {
             filtered += e.uuid
             desired[e.uuid] = Desired.Absent
@@ -546,6 +557,8 @@ class EngineHarness {
     override suspend fun setFailureNotified(notified: Boolean) = Unit
 
     override suspend fun setAccessLostNotified(ttCalIds: Set<Long>) = Unit
+
+    override suspend fun forgetCalendars(ttCalIds: Set<Long>) = Unit
 
     override suspend fun clear() {
       value = SyncStatus()
