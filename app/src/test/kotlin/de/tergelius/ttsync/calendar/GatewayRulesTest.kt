@@ -86,9 +86,45 @@ class GatewayRulesTest {
             it.long(0)
           }
           .single()
+      // A provider that writes 0 and '' for "unset" on an ordinary row: still ours.
+      sql.execute("INSERT INTO view_events VALUES (9, ?, 0, ?, 0, '')", listOf(target, "[ttsync:$uuid]"))
+      // Text in `original_id`: empty and '0' are unset, anything else is an exception. The table
+      // has INTEGER affinity as the provider's; `view_plain` has none, as a view's column may.
+      sql.execute("INSERT INTO view_events VALUES (10, ?, 0, ?, '', NULL)", listOf(target, "[ttsync:$uuid]"))
+      sql.execute("INSERT INTO view_events VALUES (11, ?, 0, ?, 'abc', NULL)", listOf(target, "[ttsync:$uuid]"))
+      sql.execute("INSERT INTO view_events VALUES (12, ?, 0, ?, 1, '')", listOf(target, "[ttsync:$uuid]"))
       assertEquals(1L, count(1))
       for (id in 2L..8L) assertEquals("row $id", 0L, count(id))
+      assertEquals(1L, count(9))
+      assertEquals(1L, count(10))
+      assertEquals(0L, count(11))
+      assertEquals(0L, count(12))
+      sql.execute(
+        "CREATE TABLE view_plain (_id INTEGER, calendar_id INTEGER, deleted INTEGER, description TEXT, " +
+          "original_id, original_sync_id)"
+      )
+      sql.execute("INSERT INTO view_plain VALUES (1, ?, 0, ?, '0', '')", listOf(target, "[ttsync:$uuid]"))
+      val plain =
+        sql.query(
+            "SELECT COUNT(*) FROM view_plain WHERE ${GatewayRules.PRECONDITION}",
+            GatewayRules.preconditionArgs(1, target, uuid),
+          ) {
+            it.long(0)
+          }
+          .single()
+      assertEquals(1L, plain)
     }
+  }
+
+  @Test
+  fun zeroAndEmptyCountAsNoException() {
+    assertEquals(false, GatewayRules.isException(null, null))
+    assertEquals(false, GatewayRules.isException("0", ""))
+    assertEquals(false, GatewayRules.isException("", null))
+    assertEquals(true, GatewayRules.isException("688", null))
+    assertEquals(true, GatewayRules.isException("abc", null))
+    assertEquals(true, GatewayRules.isException(null, "srv_20261211T190000Z"))
+    assertEquals(true, GatewayRules.isException("0", "srv"))
   }
 
   @Test

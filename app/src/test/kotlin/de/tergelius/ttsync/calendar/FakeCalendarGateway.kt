@@ -26,6 +26,8 @@ class FakeCalendarGateway : CalendarGateway {
     val values: Map<String, Any?>,
     /** `original_id` is set: Google's row for one edited date of the recurring row [originalId] (R6). */
     val originalId: Long? = null,
+    /** `original_sync_id`; some providers might store an empty string for "unset". */
+    val originalSyncId: String? = null,
   ) {
     val description: String?
       get() = values[EventSpec.COL_DESCRIPTION] as String?
@@ -35,6 +37,10 @@ class FakeCalendarGateway : CalendarGateway {
 
     val markerUuid: String?
       get() = Marker.parse(description)
+
+    /** R6, by the rule of the real gateway. */
+    val isException: Boolean
+      get() = GatewayRules.isException(originalId?.toString(), originalSyncId)
   }
 
   val calendars = LinkedHashMap<Long, CalendarInfo>()
@@ -141,7 +147,7 @@ class FakeCalendarGateway : CalendarGateway {
   override suspend fun countForeignEvents(calendarId: Long): Int {
     requirePermission()
     return rows.values.count {
-      it.calendarId == calendarId && !it.deleted && (it.markerUuid == null || it.originalId != null)
+      it.calendarId == calendarId && !it.deleted && (it.markerUuid == null || it.isException)
     }
   }
 
@@ -149,7 +155,7 @@ class FakeCalendarGateway : CalendarGateway {
     requirePermission()
     // R5: only the target calendar; the LIKE '%[ttsync:%' prefilter, then the strict parse.
     return rows.values
-      .filter { it.calendarId == target.calendarId && !it.deleted && it.originalId == null }
+      .filter { it.calendarId == target.calendarId && !it.deleted && !it.isException }
       .filter { it.description?.contains(Marker.PREFIX) == true }
       .mapNotNull { row -> row.markerUuid?.let { MarkedRow(row.id, it) } }
   }
@@ -242,12 +248,12 @@ class FakeCalendarGateway : CalendarGateway {
     // SQLite's LIKE ignores ASCII case; emulate it.
     return row.calendarId == target.calendarId &&
       !row.deleted &&
-      row.originalId == null &&
+      !row.isException &&
       row.description?.endsWith(Marker.line(uuid), ignoreCase = true) == true
   }
 
   private fun observe(id: Long): ObservedRow? =
-    rows[id]?.let { ObservedRow(it.id, it.calendarId, it.deleted, it.description, it.originalId != null) }
+    rows[id]?.let { ObservedRow(it.id, it.calendarId, it.deleted, it.description, it.isException) }
 
   private fun assertManaged(columns: Set<String>) {
     check(columns == EventSpec.MANAGED_COLUMNS.toSet()) { "R4: wrote columns $columns" }

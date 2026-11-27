@@ -83,6 +83,24 @@ data class TargetCalendar(
       accountType == other.accountType &&
       (serverId == null || serverId == other.serverId)
 
+  /**
+   * Where this calendar is now, if its `_ID` no longer holds it: the one calendar of the same
+   * account with this server id. Null if the target has no server id, or no (or more than one)
+   * such calendar is among [calendars].
+   */
+  fun movedTo(calendars: List<CalendarInfo>): CalendarInfo? =
+    sameCalendars(calendars).singleOrNull()?.takeIf { it.id != calendarId }
+
+  /**
+   * The calendars of this target's account that have its server id: one, wherever its `_ID` is
+   * now; none if the calendar is gone or this target has no server id; several only if a provider
+   * does not keep the id unique, and then none of them may be taken for the target.
+   */
+  fun sameCalendars(calendars: List<CalendarInfo>): List<CalendarInfo> {
+    val id = serverId ?: return emptyList()
+    return calendars.filter { it.accountName == accountName && it.accountType == accountType && it.serverId == id }
+  }
+
   /** This target with the server id of [current], if it has none yet and [current] has one. */
   fun withServerIdOf(current: CalendarInfo): TargetCalendar =
     if (serverId == null && current.serverId != null) copy(serverId = current.serverId) else this

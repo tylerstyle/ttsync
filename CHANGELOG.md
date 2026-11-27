@@ -4,6 +4,23 @@ All notable changes to TT Calendar Sync are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-11-27
+
+### Fixed
+
+- **Removing copies after the phone renumbered its calendars:** "Remove all copies", signing out
+  with removal, and switching the target calendar now find the old target by Google's own calendar
+  ID when the phone has given it a new internal number (for example after clearing calendar
+  storage). Before, the copies stayed behind without a notice. If the calendar cannot be written or
+  cannot be told apart, the app keeps the copies and says so.
+- **Choosing the same calendar again after such a renumbering** no longer asks to remove its
+  copies; they are adopted.
+- **Target name after an update:** The calendar name stored with the target is now taken from the
+  calendar the app actually writes to.
+- **Edited dates of repeating events:** The check that leaves edited single dates alone
+  (0.2.2) now treats empty and zero values of Android's "original event" fields as unset, so
+  ordinary copies are never mistaken for edited dates on phones that fill these fields that way.
+
 ## [0.2.2] - 2026-11-26
 
 ### Added
@@ -114,6 +131,7 @@ All notable changes to TT Calendar Sync are documented here. The format follows
 - Keeps your TimeTree email and password on the phone, encrypted with the Android Keystore.
 - Reliability checklist for background syncing; English and German UI.
 
+[0.2.3]: https://github.com/tylerstyle/ttsync/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/tylerstyle/ttsync/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/tylerstyle/ttsync/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tylerstyle/ttsync/compare/v0.1.1...v0.2.0

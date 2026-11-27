@@ -22,7 +22,20 @@ object GatewayRules {
    * into it, marker included. That row is the user's own change: the app never adopts, updates or
    * deletes it (device test 2026-11-26, F1: deleting it cancelled that date of the series).
    */
-  const val NOT_AN_EXCEPTION: String = "$COL_ORIGINAL_ID IS NULL AND $COL_ORIGINAL_SYNC_ID IS NULL"
+  const val NOT_AN_EXCEPTION: String =
+    "($COL_ORIGINAL_ID IS NULL OR $COL_ORIGINAL_ID = 0 OR $COL_ORIGINAL_ID = '' OR $COL_ORIGINAL_ID = '0') AND " +
+      "($COL_ORIGINAL_SYNC_ID IS NULL OR $COL_ORIGINAL_SYNC_ID = '')"
+
+  /**
+   * [NOT_AN_EXCEPTION] for a row that was read. Unset is NULL in the platform's provider; `0` and
+   * an empty string count as unset too, in case a vendor's provider or sync adapter writes those
+   * on ordinary rows: taking every copy for an exception would hide all of them from the app (it
+   * could remove none and would insert them again). No row has `_id` 0. [originalId] is the column
+   * read as text, so that this and the SQL agree whatever a provider stores there: anything but
+   * NULL, an empty string and `0` is an exception.
+   */
+  fun isException(originalId: String?, originalSyncId: String?): Boolean =
+    !(originalId.isNullOrEmpty() || originalId == "0") || !originalSyncId.isNullOrEmpty()
 
   /**
    * The R2 precondition, run as a `newAssertQuery(Events.CONTENT_URI)` with `withExpectedCount(1)`

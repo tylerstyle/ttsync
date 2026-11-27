@@ -136,7 +136,12 @@ class TargetViewModel(
     val option = state.selected ?: return
     if (!state.canConfirm) return
     val current = state.current
-    if (current != null && !current.isSameCalendar(TargetCalendar.of(option.info))) {
+    // The stored calendar under a new `_ID` is no switch either: its copies stay (F5).
+    val same =
+      current != null &&
+        (current.isSameCalendar(TargetCalendar.of(option.info)) ||
+          current.movedTo(state.options.map { it.info })?.id == option.info.id)
+    if (current != null && !same) {
       _state.update {
         it.copy(
           confirmSwitch =

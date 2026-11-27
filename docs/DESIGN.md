@@ -475,8 +475,8 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
   storage reset and markers removed by users.
 - **R2.** Never update or delete with a selection over the whole table. Every operation targets
   `ContentUris.withAppendedId(Events.CONTENT_URI, id)`. A selection is used only as a precondition:
-  `_id=? AND calendar_id=? AND deleted=0 AND description LIKE '%[ttsync:<uuid>]' AND original_id IS
-  NULL AND original_sync_id IS NULL` with `withExpectedCount(1)`. If a precondition fails, the whole chunk aborts. The engine then replays that
+  `_id=? AND calendar_id=? AND deleted=0 AND description LIKE '%[ttsync:<uuid>]'` plus "not an
+  exception" (R6), with `withExpectedCount(1)`. If a precondition fails, the whole chunk aborts. The engine then replays that
   chunk one operation at a time, and the failing operation goes back through adopt-or-insert.
 - **R3.** Insert only into the target calendar, after the step 1 checks.
 - **R4.** Never use `CALLER_IS_SYNCADAPTER`. Never write Attendees, Reminders, ExtendedProperties or
@@ -489,6 +489,9 @@ The engine logs the mode and why, e.g. `calendar 1: FULL (last FULL 361 min ago,
   the calendar (device run 10). Now the scan leaves such rows out, the R1 check refuses them
   (`EXCEPTION`) and the R2 precondition excludes them. They belong to the user. When the app
   deletes their series row, Google removes them by itself a few minutes later (device run 11).
+  "Set" means anything but NULL, `0` and an empty string (`GatewayRules.isException`, and the same
+  in SQL): should a provider write `0` or `''` for "unset" on ordinary rows, the copies stay ours.
+  Only NULL was seen on a phone.
 
 Known v1 behaviour (device test): TimeTree's default labels have empty names (the app shows them
 localized), so in 0.1.x they added no `Label:` line; only renamed labels did. Since 0.2.0 (B3) an
@@ -502,6 +505,13 @@ written.
 User actions:
 - **Changing the target calendar.** After a confirm, delete our rows in the old calendar (R1), clear the
   mappings, then run FULL. `calendar_id` is never changed in place.
+- **A renumbered target.** If the stored `_ID` no longer holds the chosen calendar (step 1), a run
+  writes nothing and never looks for it elsewhere: the user chooses again. A *removal* does look: if
+  exactly one calendar of the account has the stored server id, "Remove all copies", the removal at
+  sign-out and a target switch delete the copies there (`SyncEngine.whereNow`,
+  `UserActions.changeTarget`); otherwise the copies would stay for good without a word. Choosing that
+  calendar again keeps its copies, and the next run adopts them. If several calendars have the id,
+  nothing is removed (the removal fails; a switch says that the old copies stay).
 - **Deselecting a TimeTree calendar.** After a confirm, delete its copies, snapshots, mappings and cursor.
 - **Losing access.** Pause the calendar, keep its copies, and notify with a "Remove copies" action. When
   no calendar is left, cancel the periodic work.

@@ -188,12 +188,29 @@ class UserActions(
     if (old != null) {
       scheduler.cancelAll()
       restoringOnFailure(current) {
-        when (old.check(gateway.calendar(old.calendarId))) {
-          TargetCheck.OK ->
+        val check = old.check(gateway.calendar(old.calendarId))
+        // The old `_ID` is not the old calendar any more: where is that one now? (Null: the `_ID`
+        // still is it, or the target was stored without a server id.)
+        val now =
+          if (old.serverId != null && (check == TargetCheck.MISSING || check == TargetCheck.ACCOUNT_CHANGED)) {
+            old.sameCalendars(gateway.calendars())
+          } else {
+            null
+          }
+        val moved = now?.singleOrNull()?.let(TargetCalendar::of)
+        when {
+          now == null && check == TargetCheck.OK ->
             removal = withContext(io) { engine.removeAllCopies(old, stopSyncing = false) }
           // The calendar and its copies are gone: only the mappings are left to clear.
-          TargetCheck.MISSING -> withContext(io) { engine.dropMappings() }
-          // The old calendar can no longer be written safely: leave its rows alone.
+          now == null && check == TargetCheck.MISSING || now?.isEmpty() == true ->
+            withContext(io) { engine.dropMappings() }
+          // The user picked the old calendar again under its new `_ID`: its copies stay and the
+          // next run adopts them.
+          moved != null && moved.isSameCalendar(newTarget) -> withContext(io) { engine.dropMappings() }
+          moved != null && moved.check(now.single()) == TargetCheck.OK ->
+            removal = withContext(io) { engine.removeAllCopies(moved, stopSyncing = false) }
+          // The old calendar can no longer be written safely, or can't be told from another one:
+          // leave its rows alone, and say so.
           else -> {
             withContext(io) { engine.dropMappings() }
             oldCopiesLeft = true

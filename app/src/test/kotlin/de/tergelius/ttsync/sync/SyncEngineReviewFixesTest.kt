@@ -317,4 +317,80 @@ class SyncEngineReviewFixesTest {
     assertNotNull(h.target.serverId)
     assertEquals(h.liveA, h.copies().keys)
   }
+
+  @Test
+  fun f5_theBackfillStoresTheNameOfTheRowItTookTheIdFrom() = runTest {
+    // Stored by an older version; the `_ID` already holds another calendar when 0.2.2 first runs.
+    // That can't be told any more, but Status and Settings must name the calendar written to.
+    h.settings.value = h.settings.value.copy(target = h.target.copy(serverId = null))
+    h.gateway.calendars[EngineHarness.TARGET] = EngineHarness.google(EngineHarness.TARGET, "another")
+
+    h.sync()
+    assertEquals("another", h.settings.value.targetDisplayName)
+    assertEquals("another@group.example", h.settings.value.target?.serverId)
+  }
+
+  /** The phone renumbered its calendars: the target's `_ID` holds another one, the target is 77. */
+  private fun renumber(): Long {
+    val was = h.gateway.calendars.getValue(EngineHarness.TARGET)
+    h.gateway.calendars[EngineHarness.TARGET] = EngineHarness.google(EngineHarness.TARGET, "another")
+    h.gateway.calendars[77] = was.copy(id = 77)
+    for ((id, row) in h.gateway.rows.toMap()) {
+      if (row.calendarId == EngineHarness.TARGET) h.gateway.rows[id] = row.copy(calendarId = 77)
+    }
+    return 77
+  }
+
+  @Test
+  fun f5_removeAllCopiesFollowsARenumberedTarget() = runTest {
+    h.sync()
+    val copies = h.gateway.rows.values.count { it.calendarId == EngineHarness.TARGET && !it.deleted && it.markerUuid != null }
+    assertTrue(copies > 0)
+    val now = renumber()
+    val foreign = h.gateway.rows.values.count { it.markerUuid == null }
+
+    val removal = h.engine.removeAllCopies(h.target)
+    assertTrue(removal.succeeded)
+    assertEquals(copies, removal.deleted)
+    assertTrue(h.gateway.rows.values.none { it.calendarId == now && !it.deleted && it.markerUuid != null })
+    assertEquals(foreign, h.gateway.rows.values.count { it.markerUuid == null && !it.deleted })
+  }
+
+  @Test
+  fun f5_removeAllCopiesRefusesWhenTwoCalendarsHaveTheTargetsServerId() = runTest {
+    h.sync()
+    val now = renumber()
+    h.gateway.calendars[78] = h.gateway.calendars.getValue(now).copy(id = 78)
+    val rows = h.gateway.rows.toMap()
+    val sources = h.settings.value.sources
+
+    val removal = h.engine.removeAllCopies(h.target)
+    assertEquals(SyncProblem.TARGET_UNAVAILABLE, removal.failure?.problem)
+    assertEquals(rows, h.gateway.rows.toMap())
+    assertEquals(sources, h.settings.value.sources)
+  }
+
+  @Test
+  fun f5_removeAllCopiesWithoutPermissionFailsAlsoForARenumberedTarget() = runTest {
+    h.sync()
+    renumber()
+    h.gateway.permission = false
+    val rows = h.gateway.rows.toMap()
+
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, h.engine.removeAllCopies(h.target).failure?.problem)
+    assertEquals(rows, h.gateway.rows.toMap())
+  }
+
+  @Test
+  fun r6_zeroAndEmptyOriginalColumnsAreOrdinaryRows() = runTest {
+    h.sync()
+    // A provider that writes '' for "unset": the copies stay ours.
+    for ((id, row) in h.gateway.rows.toMap()) h.gateway.rows[id] = row.copy(originalId = 0, originalSyncId = "")
+    val copies = h.gateway.rows.values.count { it.calendarId == EngineHarness.TARGET && !it.deleted && it.markerUuid != null }
+
+    val report = h.sync(full = true)
+    assertTrue(report.succeeded)
+    assertEquals(0, report.counts.added)
+    assertEquals(copies, h.engine.removeAllCopies(h.target).deleted)
+  }
 }

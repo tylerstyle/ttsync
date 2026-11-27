@@ -184,9 +184,10 @@ class DefaultSyncEngine(
   override suspend fun removeAllCopies(target: TargetCalendar, stopSyncing: Boolean): RemovalReport =
     LOCK.withLock {
       removal("remove all copies") { counter ->
-        if (targetWritable(target)) {
-          val rows = calendarCall { gateway.findMarkedRows(target) }
-          deleteVerified(target, rows.map { CalendarOp.Delete(it.eventId, it.uuid) }, counter)
+        val at = whereNow(target)
+        if (at != null && targetWritable(at)) {
+          val rows = calendarCall { gateway.findMarkedRows(at) }
+          deleteVerified(at, rows.map { CalendarOp.Delete(it.eventId, it.uuid) }, counter)
         }
         // Only after the deletes went through: a failed removal keeps everything, so syncing goes
         // on and the user can retry (phase 5 review, SHOULD-FIX-1).
@@ -298,6 +299,33 @@ class DefaultSyncEngine(
       db.pendingDeletes.clear()
     }
     log.i("syncing stopped: ${current.sources.size} sources cleared")
+  }
+
+  /**
+   * [stored] at the `_ID` its calendar has now, for a removal. After a reset of the phone's
+   * calendar storage the stored `_ID` can hold another calendar (or one of another account) while
+   * the chosen one, copies included, lives on under a new `_ID`: the removal must go there, or the
+   * copies would stay for good without a word, since the app reads only its target. Null if that
+   * calendar is gone. If more than one calendar of the account has its server id, nothing is
+   * removed and the removal fails. A target without a server id is returned as it is.
+   *
+   * Only removals follow a calendar. A run never does: it fails with `TARGET_DELETED`, and the
+   * user chooses the calendar again.
+   */
+  private suspend fun whereNow(stored: TargetCalendar): TargetCalendar? {
+    if (!gateway.hasPermission()) fail(SyncProblem.NO_CALENDAR_PERMISSION)
+    if (stored.serverId == null) return stored
+    val check = stored.check(calendarCall { gateway.calendar(stored.calendarId) })
+    if (check != TargetCheck.MISSING && check != TargetCheck.ACCOUNT_CHANGED) return stored
+    val now = stored.sameCalendars(calendarCall { gateway.calendars() })
+    return when (now.size) {
+      0 -> null
+      1 -> TargetCalendar.of(now.single()).also { log.i("removal: the target has a new _id") }
+      else -> {
+        log.w("removal: ${now.size} calendars have the target's server id")
+        fail(SyncProblem.TARGET_UNAVAILABLE)
+      }
+    }
   }
 
   /** True if [target] can take deletes, false if it is gone (its rows went with it). */
@@ -641,7 +669,12 @@ class DefaultSyncEngine(
       // A target stored before 0.2.2 has no server id yet: keep it from now on (F5).
       val target = targetRow?.let(stored::withServerIdOf) ?: stored
       if (target != stored) {
-        settings.setTarget(target, current.targetDisplayName ?: targetRow?.displayName.orEmpty())
+        // With the row's name of now, not the stored one: the id is taken from this row, so Status
+        // and Settings must name this row, also if it is not the calendar the stored name meant
+        // (the phone renumbered its calendars before this version ran for the first time).
+        val name = targetRow?.displayName?.takeIf { it.isNotBlank() } ?: current.targetDisplayName.orEmpty()
+        if (name != current.targetDisplayName) log.w("target: the calendar's name differs from the stored one")
+        settings.setTarget(target, name)
         this.target = target
         log.i("target: server id stored")
       }

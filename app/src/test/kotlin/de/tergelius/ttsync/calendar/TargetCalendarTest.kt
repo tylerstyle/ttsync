@@ -45,6 +45,21 @@ class TargetCalendarTest {
   }
 
   @Test
+  fun aRenumberedCalendarIsFoundByItsServerId() {
+    val other = info.copy(id = 15, displayName = "other", serverId = "other@group.example")
+    val moved = info.copy(id = 22)
+    assertEquals(moved, target.movedTo(listOf(other, moved)))
+    // Where it was, gone, another account, no server id stored, or not unique: no answer.
+    assertEquals(null, target.movedTo(listOf(info)))
+    assertEquals(null, target.movedTo(listOf(other)))
+    assertEquals(null, target.movedTo(listOf(other, moved.copy(accountName = "else@example.org"))))
+    assertEquals(null, target.copy(serverId = null).movedTo(listOf(other, moved)))
+    assertEquals(null, target.movedTo(listOf(other, moved, moved.copy(id = 23))))
+    assertEquals(2, target.sameCalendars(listOf(other, moved, moved.copy(id = 23))).size)
+    assertEquals(listOf(info), target.sameCalendars(listOf(info, other)))
+  }
+
+  @Test
   fun sameCalendarPasses() {
     assertTrue(info.isEligibleTarget)
     assertEquals(TargetCheck.OK, target.check(info))

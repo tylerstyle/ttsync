@@ -204,6 +204,86 @@ class UserActionsTest {
     assertTrue(g.calls.log.none { it.startsWith("engine.removeAllCopies") })
   }
 
+  /** The phone renumbered its calendars: 15 is another calendar now, the old target is 22. */
+  private fun renumbered(): UiTestGraph {
+    val stored = target(15).copy(serverId = "tt@group.example")
+    val g = UiTestGraph(settings = configured.copy(target = stored), credentials = SIGNED_IN)
+    g.gateway.calendars =
+      listOf(
+        calendar(15, "Other").copy(serverId = "other@group.example"),
+        calendar(16, "Third").copy(serverId = "third@group.example"),
+        calendar(22, "TimeTree").copy(serverId = "tt@group.example"),
+      )
+    return g
+  }
+
+  @Test
+  fun switchingAwayFromARenumberedTargetRemovesItsCopiesWhereItIsNow() = runTest {
+    val g = renumbered()
+    g.engine.removal = RemovalReport(deleted = 4, rejected = 0)
+    val change = g.actions.setTarget(g.gateway.calendars[1])
+    assertEquals(4, change.removal?.deleted)
+    assertTrue("engine.removeAllCopies(22)" in g.calls.log)
+    assertTrue(g.calls.log.none { it == "engine.removeAllCopies(15)" })
+    assertEquals(16L, g.settings.current().target?.calendarId)
+  }
+
+  @Test
+  fun pickingARenumberedTargetAgainKeepsItsCopiesForAdoption() = runTest {
+    val g = renumbered()
+    val change = g.actions.setTarget(g.gateway.calendars[2])
+    assertNull(change.removal)
+    assertTrue("engine.dropMappings" in g.calls.log)
+    assertTrue(g.calls.log.none { it.startsWith("engine.removeAllCopies") })
+    assertEquals(22L, g.settings.current().target?.calendarId)
+  }
+
+  @Test
+  fun aRenumberedTargetWhoseIdWentToAnotherAccountIsFollowedToo() = runTest {
+    val g = renumbered()
+    g.gateway.calendars =
+      g.gateway.calendars.map { if (it.id == 15L) it.copy(accountName = "else@example.org") else it }
+    g.engine.removal = RemovalReport(deleted = 4, rejected = 0)
+    val away = g.actions.setTarget(g.gateway.calendars[1])
+    assertTrue("engine.removeAllCopies(22)" in g.calls.log)
+    assertEquals(false, away.oldCopiesLeft)
+
+    val again = renumbered()
+    again.gateway.calendars =
+      again.gateway.calendars.map { if (it.id == 15L) it.copy(accountName = "else@example.org") else it }
+    val change = again.actions.setTarget(again.gateway.calendars[2])
+    assertEquals(false, change.oldCopiesLeft)
+    assertTrue(again.calls.log.none { it.startsWith("engine.removeAllCopies") })
+  }
+
+  @Test
+  fun aRenumberedTargetThatCannotBeWrittenOrToldApartKeepsItsCopiesAndSaysSo() = runTest {
+    val readOnly = renumbered()
+    readOnly.gateway.calendars =
+      readOnly.gateway.calendars.map { if (it.id == 22L) it.copy(accessLevel = 200) else it }
+    val first = readOnly.actions.setTarget(readOnly.gateway.calendars[1])
+    assertEquals(true, first.oldCopiesLeft)
+    assertTrue(readOnly.calls.log.none { it.startsWith("engine.removeAllCopies") })
+
+    val twice = renumbered()
+    twice.gateway.calendars = twice.gateway.calendars + calendar(23, "Twin").copy(serverId = "tt@group.example")
+    val second = twice.actions.setTarget(twice.gateway.calendars[1])
+    assertEquals(true, second.oldCopiesLeft)
+    assertTrue(twice.calls.log.none { it.startsWith("engine.removeAllCopies") })
+  }
+
+  @Test
+  fun aRevokedPermissionIsARemovalFailureAlsoForATargetWithAServerId() = runTest {
+    // The engine finds a renumbered target itself: no provider call here can throw past it.
+    val g = renumbered()
+    val before = g.settings.flow.value
+    g.gateway.calendarError = SecurityException("READ_CALENDAR revoked")
+    g.engine.removalFailure = noPermission
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, g.actions.removeAllCopies().failure?.problem)
+    assertEquals(SyncProblem.NO_CALENDAR_PERMISSION, g.actions.signOut(removeCopies = true)?.failure?.problem)
+    assertEquals(before, g.settings.flow.value)
+  }
+
   @Test
   fun removeAllCopiesStopsSyncingAndReturnsToSources() = runTest {
     val g = UiTestGraph(settings = configured, credentials = SIGNED_IN)

@@ -83,7 +83,7 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
       arrayOf(calendarId.toString()),
     ) { cursor ->
       // R6: an edited date of a copied series is the user's, whatever its description says.
-      Marker.parse(cursor.getStringOrNull(1)) == null || !cursor.isNull(2) || !cursor.isNull(3)
+      Marker.parse(cursor.getStringOrNull(1)) == null || cursor.isException(2, 3)
     }
       .count { it }
   }
@@ -252,7 +252,7 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
           calendarId = cursor.getLong(1),
           deleted = cursor.getInt(2) != 0,
           description = cursor.getStringOrNull(3),
-          exception = !cursor.isNull(4) || !cursor.isNull(5),
+          exception = cursor.isException(4, 5),
         )
       }
         .forEach { rows[it.eventId] = it }
@@ -325,6 +325,10 @@ class ProviderCalendarGateway(context: Context) : CalendarGateway {
       }
 
     fun Cursor.getStringOrNull(index: Int): String? = if (isNull(index)) null else getString(index)
+
+    /** R6 for the columns `original_id` and `original_sync_id` at these indexes. */
+    fun Cursor.isException(originalId: Int, originalSyncId: Int): Boolean =
+      GatewayRules.isException(getStringOrNull(originalId), getStringOrNull(originalSyncId))
 
     fun Map<String, Any?>.toContentValues(): ContentValues {
       val values = ContentValues(size)
