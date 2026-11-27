@@ -5,7 +5,7 @@ plugins {
 }
 
 // Semver; versionCode = major * 10000 + minor * 100 + patch (DESIGN.md section 11).
-val appVersionName = "0.2.2"
+val appVersionName = "0.2.3"
 val appVersionCode =
   appVersionName.split('.').map(String::toInt).let { (major, minor, patch) ->
     major * 10000 + minor * 100 + patch
